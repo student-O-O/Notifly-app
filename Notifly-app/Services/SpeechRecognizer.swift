@@ -29,9 +29,11 @@ class SpeechRecognizer {
         finalizedTranscript = ""
         errorMessage = nil
 
+        #if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        #endif
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
             errorMessage = "Speech recognition is not available on this device."
