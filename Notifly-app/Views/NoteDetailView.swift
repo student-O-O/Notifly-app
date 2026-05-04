@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct NoteDetailView: View {
     @Bindable var note: SessionNote
@@ -21,7 +24,9 @@ struct NoteDetailView: View {
             exportSection
         }
         .navigationTitle("\(note.noteFormat.rawValue) Note")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(isEditing ? "Done" : "Edit") {
@@ -94,7 +99,12 @@ struct NoteDetailView: View {
     private var exportSection: some View {
         Section {
             Button {
+                #if os(iOS)
                 UIPasteboard.general.string = note.asPlainText()
+                #elseif os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(note.asPlainText(), forType: .string)
+                #endif
                 withAnimation {
                     showCopiedToast = true
                 }

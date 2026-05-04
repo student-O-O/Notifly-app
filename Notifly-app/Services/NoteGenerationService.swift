@@ -5,7 +5,8 @@ struct NoteGenerationService {
         You are a clinical notes assistant for occupational therapists. \
         Convert the following session transcript into a structured note. \
         Be concise and clinical. Use third person. \
-        Do not invent information not present in the transcript.
+        Do not invent information not present in the transcript. \
+        If there isn't enough information, say that not enough information was captured.
         """)
 
     static func generateSOAP(transcript: String) async throws -> SOAPNote {

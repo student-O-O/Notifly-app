@@ -60,6 +60,11 @@ struct HomeView: View {
     }
 }
 
+#Preview {
+    HomeView()
+        .modelContainer(for: SessionNote.self, inMemory: true)
+}
+
 struct NoteRow: View {
     let note: SessionNote
 

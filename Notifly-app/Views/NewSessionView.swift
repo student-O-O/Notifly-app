@@ -11,7 +11,9 @@ struct NewSessionView: View {
             Form {
                 Section("Client") {
                     TextField("Client Initials (e.g. JD)", text: $clientInitials)
-                        .textInputAutocapitalization(.characters)
+                        #if os(iOS)
+                    .textInputAutocapitalization(.characters)
+                    #endif
                         .autocorrectionDisabled()
                 }
 
@@ -40,7 +42,9 @@ struct NewSessionView: View {
                 }
             }
             .navigationTitle("New Session")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

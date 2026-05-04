@@ -21,8 +21,10 @@ struct RecordingView: View {
             }
         }
         .navigationTitle("Recording")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(speechRecognizer.isRecording)
+        #endif
         .task {
             isAuthorized = await SpeechRecognizer.requestAuthorization()
         }

@@ -35,8 +35,10 @@ struct ReviewNoteView: View {
             }
         }
         .navigationTitle("Review Note")
+        #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(saved)
+        #endif
         .task {
             await generateNote()
         }
