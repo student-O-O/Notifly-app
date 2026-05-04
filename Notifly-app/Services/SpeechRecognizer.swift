@@ -9,11 +9,13 @@ class SpeechRecognizer {
     var isRecording = false
     var errorMessage: String?
 
-    private var audioEngine = AVAudioEngine()
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var audioEngine: AVAudioEngine?
+    nonisolated(unsafe) private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer = SFSpeechRecognizer()
-    private var finalizedTranscript = ""
+    private var segments: [String] = []
+    private var currentSegmentText = ""
+    private var taskGeneration = 0
 
     static func requestAuthorization() async -> Bool {
         await withCheckedContinuation { continuation in
@@ -26,7 +28,8 @@ class SpeechRecognizer {
     func startRecording() throws {
         stopRecording()
         transcript = ""
-        finalizedTranscript = ""
+        segments = []
+        currentSegmentText = ""
         errorMessage = nil
 
         #if os(iOS)
@@ -40,48 +43,112 @@ class SpeechRecognizer {
             return
         }
 
-        let inputNode = audioEngine.inputNode
+        let engine = AVAudioEngine()
+        audioEngine = engine
+
+        let inputNode = engine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+
+        guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
+            errorMessage = "No microphone available. Please check microphone permissions in System Settings > Privacy & Security > Microphone."
+            audioEngine = nil
+            return
+        }
+
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             self?.recognitionRequest?.append(buffer)
         }
 
-        audioEngine.prepare()
-        try audioEngine.start()
+        engine.prepare()
+        try engine.start()
         isRecording = true
-        startRecognitionTask()
+        beginRecognitionTask()
     }
 
-    private func startRecognitionTask() {
-        guard let speechRecognizer, speechRecognizer.isAvailable, isRecording else { return }
+    private func commitCurrentSegment() {
+        if !currentSegmentText.isEmpty {
+            segments.append(currentSegmentText)
+            print("[SpeechRecognizer] Committed segment \(segments.count): \(currentSegmentText.prefix(80))... (\(currentSegmentText.count) chars)")
+            currentSegmentText = ""
+        }
+        rebuildTranscript()
+    }
 
+    private func rebuildTranscript() {
+        if currentSegmentText.isEmpty {
+            transcript = segments.joined(separator: " ")
+        } else if segments.isEmpty {
+            transcript = currentSegmentText
+        } else {
+            transcript = segments.joined(separator: " ") + " " + currentSegmentText
+        }
+    }
+
+    private func beginRecognitionTask() {
+        commitCurrentSegment()
+
+        recognitionTask?.cancel()
+        recognitionTask = nil
         recognitionRequest?.endAudio()
+        recognitionRequest = nil
+
+        taskGeneration += 1
+        let currentGeneration = taskGeneration
+
+        guard let speechRecognizer, speechRecognizer.isAvailable, isRecording else {
+            if isRecording {
+                print("[SpeechRecognizer] Recognizer unavailable, retrying in 2s...")
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    guard self.isRecording, self.taskGeneration == currentGeneration else { return }
+                    self.beginRecognitionTask()
+                }
+            }
+            return
+        }
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
         request.addsPunctuation = true
+        request.taskHint = .dictation
+
+        #if os(iOS)
+        request.requiresOnDeviceRecognition = true
+        #endif
+
         recognitionRequest = request
+
+        print("[SpeechRecognizer] Starting recognition task (gen \(currentGeneration)), \(segments.count) segments saved so far")
 
         recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
-                guard let self, self.isRecording else { return }
+                guard let self, self.isRecording, self.taskGeneration == currentGeneration else { return }
 
                 if let result {
-                    let currentText = result.bestTranscription.formattedString
-                    if self.finalizedTranscript.isEmpty {
-                        self.transcript = currentText
-                    } else {
-                        self.transcript = self.finalizedTranscript + " " + currentText
+                    let newText = result.bestTranscription.formattedString
+
+                    // Detect recognizer internal reset: if the new text is dramatically
+                    // shorter than what we had, the recognizer discarded its buffer and
+                    // started fresh. Commit the old text before it's lost.
+                    if self.currentSegmentText.count > 50 &&
+                       newText.count < self.currentSegmentText.count / 2 {
+                        print("[SpeechRecognizer] Internal reset detected: \(self.currentSegmentText.count) → \(newText.count) chars. Saving segment.")
+                        self.segments.append(self.currentSegmentText)
+                        self.currentSegmentText = ""
                     }
 
+                    self.currentSegmentText = newText
+                    self.rebuildTranscript()
+
                     if result.isFinal {
-                        self.finalizedTranscript = self.transcript
-                        self.startRecognitionTask()
+                        print("[SpeechRecognizer] isFinal received (\(newText.count) chars)")
+                        self.commitCurrentSegment()
+                        self.beginRecognitionTask()
                     }
                 } else if error != nil {
-                    self.finalizedTranscript = self.transcript
-                    self.startRecognitionTask()
+                    print("[SpeechRecognizer] Error: \(error!.localizedDescription)")
+                    self.commitCurrentSegment()
+                    self.beginRecognitionTask()
                 }
             }
         }
@@ -89,11 +156,17 @@ class SpeechRecognizer {
 
     func stopRecording() {
         isRecording = false
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+        taskGeneration += 1
+        commitCurrentSegment()
+        if let engine = audioEngine {
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        audioEngine = nil
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionRequest = nil
         recognitionTask = nil
+        print("[SpeechRecognizer] Stopped. Total segments: \(segments.count), transcript length: \(transcript.count)")
     }
 }
