@@ -1,10 +1,21 @@
 import SwiftUI
+import SwiftData
 
 struct NewSessionView: View {
     @Environment(\.dismiss) private var dismiss
+    @Query(sort: \NoteTemplate.dateCreated, order: .reverse) private var templates: [NoteTemplate]
+
     @State private var clientInitials = ""
-    @State private var noteFormat: NoteFormat = .soap
+    @State private var selectedFormatID: String = NoteFormat.soap.rawValue
     @State private var navigateToRecording = false
+
+    private var noteFormat: NoteFormat {
+        NoteFormat(rawValue: selectedFormatID) ?? .custom
+    }
+
+    private var selectedTemplate: NoteTemplate? {
+        templates.first(where: { $0.id.uuidString == selectedFormatID })
+    }
 
     var body: some View {
         NavigationStack {
@@ -12,18 +23,34 @@ struct NewSessionView: View {
                 Section("Client") {
                     TextField("Client Initials (e.g. JD)", text: $clientInitials)
                         #if os(iOS)
-                    .textInputAutocapitalization(.characters)
-                    #endif
+                        .textInputAutocapitalization(.characters)
+                        #endif
                         .autocorrectionDisabled()
                 }
 
-                Section("Note Format") {
-                    Picker("Format", selection: $noteFormat) {
-                        ForEach(NoteFormat.allCases) { format in
-                            Text(format.rawValue).tag(format)
+                Section("Format") {
+                    Picker("Format", selection: $selectedFormatID) {
+                        ForEach(NoteFormat.builtInFormats) { format in
+                            Text(format.rawValue).tag(format.rawValue)
+                        }
+
+                        if !templates.isEmpty {
+                            Divider()
+
+                            ForEach(templates) { template in
+                                HStack {
+                                    Text(template.name)
+                                    Text("Custom")
+                                        .font(.caption2.weight(.medium))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(.fill.tertiary)
+                                        .clipShape(Capsule())
+                                }
+                                .tag(template.id.uuidString)
+                            }
                         }
                     }
-                    .pickerStyle(.segmented)
 
                     Text(formatDescription)
                         .font(.caption)
@@ -38,7 +65,7 @@ struct NewSessionView: View {
                             .frame(maxWidth: .infinity)
                             .font(.headline)
                     }
-                    .disabled(clientInitials.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!canStart)
                 }
             }
             .navigationTitle("New Session")
@@ -54,10 +81,19 @@ struct NewSessionView: View {
                 RecordingView(
                     clientInitials: clientInitials.trimmingCharacters(in: .whitespaces),
                     noteFormat: noteFormat,
+                    customTemplate: selectedTemplate,
                     onComplete: { dismiss() }
                 )
             }
         }
+    }
+
+    private var canStart: Bool {
+        let hasInitials = !clientInitials.trimmingCharacters(in: .whitespaces).isEmpty
+        if noteFormat == .custom {
+            return hasInitials && selectedTemplate != nil
+        }
+        return hasInitials
     }
 
     private var formatDescription: String {
@@ -66,6 +102,11 @@ struct NewSessionView: View {
             return "Subjective, Objective, Assessment, Plan"
         case .dap:
             return "Data, Assessment, Plan"
+        case .custom:
+            if let template = selectedTemplate {
+                return template.sectionTitles.joined(separator: ", ")
+            }
+            return "Select a template from the dropdown"
         }
     }
 }

@@ -4,6 +4,7 @@ import FoundationModels
 struct RecordingView: View {
     let clientInitials: String
     let noteFormat: NoteFormat
+    var customTemplate: NoteTemplate?
     var onComplete: () -> Void
 
     @State private var speechRecognizer = SpeechRecognizer()
@@ -33,6 +34,7 @@ struct RecordingView: View {
                 clientInitials: clientInitials,
                 noteFormat: noteFormat,
                 transcript: speechRecognizer.transcript,
+                customTemplate: customTemplate,
                 onComplete: onComplete
             )
         }

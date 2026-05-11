@@ -44,3 +44,39 @@ struct DAPNote {
     @Guide(description: "Therapeutic interventions and techniques used")
     var interventionsUsed: String
 }
+
+@Generable(description: "A single section of a clinical note")
+struct GeneratedSection {
+    @Guide(description: "The exact section title as specified in the prompt")
+    var title: String
+
+    @Guide(description: "The clinical content for this section")
+    var content: String
+}
+
+@Generable(description: "A clinical note with custom sections")
+struct CustomGeneratedNote {
+    @Guide(description: "The sections of the note, one for each section title specified")
+    var sections: [GeneratedSection]
+}
+
+@Generable(description: "A single named field within a goal entry, containing real content extracted from a transcript")
+struct GeneratedGoalField {
+    @Guide(description: "The field name, matching exactly one of the specified field names")
+    var fieldName: String
+
+    @Guide(description: "Real clinical content extracted from the transcript for this field. Must never be the field name itself.")
+    var content: String
+}
+
+@Generable(description: "One goal or topic entry extracted from a therapy session transcript")
+struct GeneratedGoalEntry {
+    @Guide(description: "All fields for this goal, one per field name specified. Each must contain real transcript content.")
+    var fields: [GeneratedGoalField]
+}
+
+@Generable(description: "All goals extracted from a therapy session transcript. Each distinct goal discussed becomes its own entry.")
+struct GeneratedGoalEntries {
+    @Guide(description: "One entry per distinct goal or topic found in the transcript. Must have at least one entry.")
+    var entries: [GeneratedGoalEntry]
+}
