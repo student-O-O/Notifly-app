@@ -10,7 +10,7 @@ class SpeechRecognizer {
     var errorMessage: String?
 
     private var audioEngine: AVAudioEngine?
-    nonisolated(unsafe) private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer = SFSpeechRecognizer()
     private var segments: [String] = []

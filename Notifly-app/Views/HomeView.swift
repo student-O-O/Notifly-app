@@ -17,6 +17,13 @@ struct HomeView: View {
             }
             .navigationTitle("NOTIFLY")
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        TemplateListView()
+                    } label: {
+                        Image(systemName: "doc.badge.gearshape")
+                    }
+                }
                 ToolbarItem(placement: .bottomBar) {
                     Button {
                         showNewSession = true
@@ -62,7 +69,7 @@ struct HomeView: View {
 
 #Preview {
     HomeView()
-        .modelContainer(for: SessionNote.self, inMemory: true)
+        .modelContainer(for: [SessionNote.self, NoteTemplate.self], inMemory: true)
 }
 
 struct NoteRow: View {
@@ -78,7 +85,7 @@ struct NoteRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(note.noteFormat.rawValue)
+            Text(note.displayName)
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
