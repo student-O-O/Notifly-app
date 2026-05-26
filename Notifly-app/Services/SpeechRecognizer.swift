@@ -7,15 +7,12 @@ import AVFoundation
 class SpeechRecognizer {
     var transcript = ""
     var isRecording = false
+    var isTranscribing = false
+    var transcribingProgress: String = ""
     var errorMessage: String?
 
-    private var audioEngine: AVAudioEngine?
-    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private let speechRecognizer = SFSpeechRecognizer()
-    private var segments: [String] = []
-    private var currentSegmentText = ""
-    private var taskGeneration = 0
+    private var audioRecorder: AVAudioRecorder?
+    private var audioURL: URL?
 
     static func requestAuthorization() async -> Bool {
         await withCheckedContinuation { continuation in
@@ -26,147 +23,106 @@ class SpeechRecognizer {
     }
 
     func startRecording() throws {
-        stopRecording()
         transcript = ""
-        segments = []
-        currentSegmentText = ""
         errorMessage = nil
+        transcribingProgress = ""
 
         #if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+        try audioSession.setCategory(.record, mode: .spokenAudio, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         #endif
 
-        guard let speechRecognizer, speechRecognizer.isAvailable else {
-            errorMessage = "Speech recognition is not available on this device."
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("notifly-recording-\(UUID().uuidString).wav")
+        audioURL = url
+
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 16000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false
+        ]
+
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        guard recorder.record() else {
+            errorMessage = "Failed to start recording. Please check microphone permissions."
+            audioURL = nil
             return
         }
-
-        let engine = AVAudioEngine()
-        audioEngine = engine
-
-        let inputNode = engine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-
-        guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
-            errorMessage = "No microphone available. Please check microphone permissions in System Settings > Privacy & Security > Microphone."
-            audioEngine = nil
-            return
-        }
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
-
-        engine.prepare()
-        try engine.start()
+        audioRecorder = recorder
         isRecording = true
-        beginRecognitionTask()
+        print("[SpeechRecognizer] Recording to \(url.lastPathComponent)")
     }
 
-    private func commitCurrentSegment() {
-        if !currentSegmentText.isEmpty {
-            segments.append(currentSegmentText)
-            print("[SpeechRecognizer] Committed segment \(segments.count): \(currentSegmentText.prefix(80))... (\(currentSegmentText.count) chars)")
-            currentSegmentText = ""
-        }
-        rebuildTranscript()
-    }
-
-    private func rebuildTranscript() {
-        if currentSegmentText.isEmpty {
-            transcript = segments.joined(separator: " ")
-        } else if segments.isEmpty {
-            transcript = currentSegmentText
-        } else {
-            transcript = segments.joined(separator: " ") + " " + currentSegmentText
-        }
-    }
-
-    private func beginRecognitionTask() {
-        commitCurrentSegment()
-
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
-
-        taskGeneration += 1
-        let currentGeneration = taskGeneration
-
-        guard let speechRecognizer, speechRecognizer.isAvailable, isRecording else {
-            if isRecording {
-                print("[SpeechRecognizer] Recognizer unavailable, retrying in 2s...")
-                Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    guard self.isRecording, self.taskGeneration == currentGeneration else { return }
-                    self.beginRecognitionTask()
-                }
-            }
+    func stopRecording() async {
+        guard isRecording, let recorder = audioRecorder, let url = audioURL else {
+            isRecording = false
             return
         }
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = true
-        request.taskHint = .dictation
+        recorder.stop()
+        audioRecorder = nil
+        isRecording = false
+        print("[SpeechRecognizer] Recording stopped. Starting transcription...")
 
-        #if os(iOS)
-        request.requiresOnDeviceRecognition = true
-        #endif
+        isTranscribing = true
+        await transcribe(url: url)
+        isTranscribing = false
+        transcribingProgress = ""
 
-        recognitionRequest = request
-
-        print("[SpeechRecognizer] Starting recognition task (gen \(currentGeneration)), \(segments.count) segments saved so far")
-
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self, self.isRecording, self.taskGeneration == currentGeneration else { return }
-
-                if let result {
-                    let newText = result.bestTranscription.formattedString
-
-                    // Detect recognizer internal reset: if the new text is dramatically
-                    // shorter than what we had, the recognizer discarded its buffer and
-                    // started fresh. Commit the old text before it's lost.
-                    if self.currentSegmentText.count > 50 &&
-                       newText.count < self.currentSegmentText.count / 2 {
-                        print("[SpeechRecognizer] Internal reset detected: \(self.currentSegmentText.count) → \(newText.count) chars. Saving segment.")
-                        self.segments.append(self.currentSegmentText)
-                        self.currentSegmentText = ""
-                    }
-
-                    self.currentSegmentText = newText
-                    self.rebuildTranscript()
-
-                    if result.isFinal {
-                        print("[SpeechRecognizer] isFinal received (\(newText.count) chars)")
-                        self.commitCurrentSegment()
-                        self.beginRecognitionTask()
-                    }
-                } else if error != nil {
-                    print("[SpeechRecognizer] Error: \(error!.localizedDescription)")
-                    self.commitCurrentSegment()
-                    self.beginRecognitionTask()
-                }
-            }
-        }
+        try? FileManager.default.removeItem(at: url)
+        audioURL = nil
     }
 
-    func stopRecording() {
-        isRecording = false
-        taskGeneration += 1
-        commitCurrentSegment()
-        if let engine = audioEngine {
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
+    private func transcribe(url: URL) async {
+        do {
+            transcribingProgress = "Preparing transcription..."
+
+            let transcriber = SpeechTranscriber(
+                locale: Locale.current,
+                transcriptionOptions: [],
+                reportingOptions: [],
+                attributeOptions: []
+            )
+
+            // Ensure the on-device speech model is installed for this locale
+            if let installRequest = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                transcribingProgress = "Preparing speech model..."
+                try await installRequest.downloadAndInstall()
+            }
+
+            transcribingProgress = "Transcribing recording..."
+
+            let analyzer = SpeechAnalyzer(modules: [transcriber])
+            let audioFile = try AVAudioFile(forReading: url)
+
+            // Collect results concurrently so the stream is drained while the
+            // analyzer is still feeding it.
+            async let collectedTask: String = {
+                var text = ""
+                for try await result in transcriber.results where result.isFinal {
+                    text += String(result.text.characters)
+                }
+                return text
+            }()
+
+            // `finishAfterFile: true` tells the analyzer this file is the entire
+            // input — without it, the analyzer waits for more audio and the
+            // results stream never terminates.
+            try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
+
+            let collected = try await collectedTask
+            transcript = collected
+            print("[SpeechRecognizer] Transcription complete: \(transcript.count) chars")
+
+            if transcript.isEmpty {
+                errorMessage = "Transcription produced no text. The recording may be too quiet or unclear."
+            }
+        } catch {
+            errorMessage = "Transcription failed: \(error.localizedDescription)"
+            print("[SpeechRecognizer] Error: \(error)")
         }
-        audioEngine = nil
-        recognitionRequest?.endAudio()
-        recognitionTask?.cancel()
-        recognitionRequest = nil
-        recognitionTask = nil
-        print("[SpeechRecognizer] Stopped. Total segments: \(segments.count), transcript length: \(transcript.count)")
     }
 }

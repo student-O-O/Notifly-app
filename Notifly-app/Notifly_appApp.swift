@@ -6,7 +6,6 @@ struct Notifly_appApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             SessionNote.self,
-            NoteTemplate.self,
         ])
         let storeURL = URL.applicationSupportDirectory.appending(path: "Notifly.store")
         let modelConfiguration = ModelConfiguration(schema: schema, url: storeURL, allowsSave: true)
@@ -15,8 +14,10 @@ struct Notifly_appApp: App {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             // Store is incompatible with the new schema — delete and retry
+            let parent = storeURL.deletingLastPathComponent()
+            let name = storeURL.lastPathComponent
             for suffix in ["", "-shm", "-wal"] {
-                try? FileManager.default.removeItem(at: URL(filePath: storeURL.path() + suffix))
+                try? FileManager.default.removeItem(at: parent.appendingPathComponent(name + suffix))
             }
             do {
                 return try ModelContainer(for: schema, configurations: [modelConfiguration])

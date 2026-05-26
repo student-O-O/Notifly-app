@@ -5,8 +5,9 @@ import FoundationModels
 struct ReviewNoteView: View {
     let clientInitials: String
     let noteFormat: NoteFormat
+    var tone: NoteTone = .standard
+    let sessionID: UUID
     let transcript: String
-    var customTemplate: NoteTemplate?
     var onComplete: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -22,11 +23,15 @@ struct ReviewNoteView: View {
     @State private var timeSpent = ""
     @State private var interventionsUsed = ""
 
-    @State private var customSectionContents: [String: String] = [:]
-    @State private var tableData: CustomTableData?
+    @State private var sessionObservations = ""
+    @State private var goalCards: [GoalCard] = []
 
     @State private var showTranscript = false
     @State private var saved = false
+    @State private var selectedTone: NoteTone?
+    @State private var showRegenerateSheet = false
+    @State private var navigateToRegenerated = false
+    @State private var regenerateTone: NoteTone = .standard
 
     var body: some View {
         Group {
@@ -44,7 +49,23 @@ struct ReviewNoteView: View {
         .navigationBarBackButtonHidden(saved)
         #endif
         .task {
+            if selectedTone == nil {
+                selectedTone = tone
+            }
             await generateNote()
+        }
+        .sheet(isPresented: $showRegenerateSheet) {
+            regenerateSheet
+        }
+        .navigationDestination(isPresented: $navigateToRegenerated) {
+            ReviewNoteView(
+                clientInitials: clientInitials,
+                noteFormat: noteFormat,
+                tone: regenerateTone,
+                sessionID: sessionID,
+                transcript: transcript,
+                onComplete: onComplete
+            )
         }
     }
 
@@ -52,16 +73,9 @@ struct ReviewNoteView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .controlSize(.large)
-            Text("Generating your \(displayName) note...")
+            Text("Generating your \(noteFormat.rawValue) note...")
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var displayName: String {
-        if noteFormat == .custom, let name = customTemplate?.name {
-            return name
-        }
-        return noteFormat.rawValue
     }
 
     private func errorView(_ error: String) -> some View {
@@ -81,6 +95,10 @@ struct ReviewNoteView: View {
     private var noteForm: some View {
         Form {
             Section {
+                LabeledContent("Tone", value: (selectedTone ?? tone).rawValue)
+            }
+
+            Section {
                 DisclosureGroup("Transcript", isExpanded: $showTranscript) {
                     Text(transcript)
                         .font(.caption)
@@ -95,12 +113,8 @@ struct ReviewNoteView: View {
             case .dap:
                 dapFields
                 commonFields
-            case .custom:
-                if customTemplate?.isTableFormat == true {
-                    tableFields
-                } else {
-                    customFields
-                }
+            case .goalFocused:
+                goalFocusedFields
             }
 
             Section {
@@ -112,6 +126,58 @@ struct ReviewNoteView: View {
                         .font(.headline)
                 }
                 .disabled(saved)
+            }
+
+            if saved {
+                Section {
+                    Button {
+                        regenerateTone = selectedTone ?? tone
+                        showRegenerateSheet = true
+                    } label: {
+                        Label("Generate Another Note", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+                }
+            }
+        }
+    }
+
+    private var regenerateSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Select Tone") {
+                    Picker("Tone", selection: $regenerateTone) {
+                        ForEach(NoteTone.allCases) { t in
+                            Text(t.rawValue).tag(t)
+                        }
+                    }
+                    .pickerStyle(.inline)
+
+                    Text(regenerateTone.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Button {
+                        showRegenerateSheet = false
+                        navigateToRegenerated = true
+                    } label: {
+                        Label("Generate Note", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+                }
+            }
+            .navigationTitle("Generate Another Note")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showRegenerateSheet = false }
+                }
             }
         }
     }
@@ -172,66 +238,81 @@ struct ReviewNoteView: View {
     }
 
     @ViewBuilder
-    private var customFields: some View {
-        if let template = customTemplate {
-            ForEach(template.sectionTitles, id: \.self) { title in
-                Section(title) {
+    private var goalFocusedFields: some View {
+        Section("Session Observations") {
+            TextEditor(text: $sessionObservations)
+                .frame(minHeight: 60)
+        }
+
+        ForEach(goalCards.indices, id: \.self) { index in
+            Section {
+                TextField("Goal", text: Binding(
+                    get: { goalCards[index].goal },
+                    set: { goalCards[index].goal = $0 }
+                ), axis: .vertical)
+                    .font(.headline)
+                    .padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Activities")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     TextEditor(text: Binding(
-                        get: { customSectionContents[title] ?? "" },
-                        set: { customSectionContents[title] = $0 }
+                        get: { goalCards[index].activities },
+                        set: { goalCards[index].activities = $0 }
                     ))
-                    .frame(minHeight: 80)
+                    .frame(minHeight: 60)
                 }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Observations")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: Binding(
+                        get: { goalCards[index].observations },
+                        set: { goalCards[index].observations = $0 }
+                    ))
+                    .frame(minHeight: 60)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Next Steps")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: Binding(
+                        get: { goalCards[index].nextSteps },
+                        set: { goalCards[index].nextSteps = $0 }
+                    ))
+                    .frame(minHeight: 60)
+                }
+            } header: {
+                Text(goalCards.count > 1 ? "Goal \(index + 1)" : "Goal")
             }
         }
-    }
 
-    @ViewBuilder
-    private var tableFields: some View {
-        if let table = tableData {
-            ForEach(table.rows.indices, id: \.self) { rowIndex in
-                Section {
-                    Text(table.rows[rowIndex].first ?? "")
-                        .font(.headline)
-                        .padding(.vertical, 4)
-
-                    ForEach(1..<table.columns.count, id: \.self) { colIndex in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(table.columns[colIndex])
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            TextEditor(text: Binding(
-                                get: {
-                                    guard rowIndex < (tableData?.rows.count ?? 0),
-                                          colIndex < (tableData?.rows[rowIndex].count ?? 0) else { return "" }
-                                    return tableData!.rows[rowIndex][colIndex]
-                                },
-                                set: { tableData?.rows[rowIndex][colIndex] = $0 }
-                            ))
-                            .frame(minHeight: 60)
-                        }
-                    }
-                } header: {
-                    Text("\(table.columns.first ?? "Entry") \(rowIndex + 1)")
-                }
+        Section {
+            Button {
+                goalCards.append(GoalCard(goal: "", activities: "", observations: "", nextSteps: ""))
+            } label: {
+                Label("Add Goal", systemImage: "plus.circle")
             }
 
-            Section {
-                Button {
-                    let emptyRow = Array(repeating: "", count: table.columns.count)
-                    tableData?.rows.append(emptyRow)
+            if !goalCards.isEmpty {
+                Button(role: .destructive) {
+                    goalCards.removeLast()
                 } label: {
-                    Label("Add \(table.columns.first ?? "Entry")", systemImage: "plus.circle")
+                    Label("Remove Last Goal", systemImage: "minus.circle")
                 }
             }
         }
     }
 
     private func generateNote() async {
+        let currentTone = selectedTone ?? tone
         do {
             switch noteFormat {
             case .soap:
-                let note = try await NoteGenerationService.generateSOAP(transcript: transcript)
+                let note = try await NoteGenerationService.generateSOAP(transcript: transcript, tone: currentTone)
                 subjective = note.subjective
                 objective = note.objective
                 assessment = note.assessment
@@ -240,31 +321,18 @@ struct ReviewNoteView: View {
                 timeSpent = note.timeSpent
                 interventionsUsed = note.interventionsUsed
             case .dap:
-                let note = try await NoteGenerationService.generateDAP(transcript: transcript)
+                let note = try await NoteGenerationService.generateDAP(transcript: transcript, tone: currentTone)
                 data = note.data
                 assessment = note.assessment
                 plan = note.plan
                 goalsAddressed = note.goalsAddressed
                 timeSpent = note.timeSpent
                 interventionsUsed = note.interventionsUsed
-            case .custom:
-                if let template = customTemplate {
-                    if template.isTableFormat {
-                        tableData = try await NoteGenerationService.generateGoalEntries(
-                            transcript: transcript,
-                            fieldNames: template.sectionTitles,
-                            promptInstructions: template.promptInstructions.isEmpty ? nil : template.promptInstructions
-                        )
-                    } else {
-                        let sections = try await NoteGenerationService.generateCustom(
-                            transcript: transcript,
-                            sectionTitles: template.sectionTitles,
-                            promptInstructions: template.promptInstructions.isEmpty ? nil : template.promptInstructions
-                        )
-                        for section in sections {
-                            customSectionContents[section.title] = section.content
-                        }
-                    }
+            case .goalFocused:
+                let note = try await NoteGenerationService.generateGoalFocused(transcript: transcript, tone: currentTone)
+                sessionObservations = note.sessionObservations
+                goalCards = note.goals.map {
+                    GoalCard(goal: $0.goal, activities: $0.activities, observations: $0.observations, nextSteps: $0.nextSteps)
                 }
             }
             isGenerating = false
@@ -275,47 +343,25 @@ struct ReviewNoteView: View {
     }
 
     private func saveNote() {
-        if noteFormat == .custom, let template = customTemplate {
-            if template.isTableFormat, let table = tableData {
-                let note = SessionNote(
-                    clientInitials: clientInitials,
-                    noteFormat: .custom,
-                    transcript: transcript,
-                    templateName: template.name,
-                    customTableData: table,
-                    isTableFormat: true
-                )
-                modelContext.insert(note)
-            } else {
-                let sections = template.sectionTitles.map { title in
-                    CustomSection(title: title, content: customSectionContents[title] ?? "")
-                }
-                let note = SessionNote(
-                    clientInitials: clientInitials,
-                    noteFormat: .custom,
-                    transcript: transcript,
-                    templateName: template.name,
-                    customSections: sections
-                )
-                modelContext.insert(note)
-            }
-        } else {
-            let note = SessionNote(
-                clientInitials: clientInitials,
-                noteFormat: noteFormat,
-                transcript: transcript,
-                subjective: subjective,
-                objective: objective,
-                assessment: assessment,
-                plan: plan,
-                data: data,
-                goalsAddressed: goalsAddressed,
-                timeSpent: timeSpent,
-                interventionsUsed: interventionsUsed
-            )
-            modelContext.insert(note)
-        }
+        let currentTone = selectedTone ?? tone
+        let note = SessionNote(
+            clientInitials: clientInitials,
+            noteFormat: noteFormat,
+            tone: currentTone,
+            sessionID: sessionID,
+            transcript: transcript,
+            subjective: subjective,
+            objective: objective,
+            assessment: assessment,
+            plan: plan,
+            data: data,
+            goalsAddressed: goalsAddressed,
+            timeSpent: timeSpent,
+            interventionsUsed: interventionsUsed,
+            sessionObservations: sessionObservations,
+            goalCards: goalCards
+        )
+        modelContext.insert(note)
         saved = true
-        onComplete()
     }
 }

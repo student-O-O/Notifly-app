@@ -1,32 +1,20 @@
 import Foundation
 import SwiftData
 
-struct CustomSection: Codable, Sendable {
-    var title: String
-    var content: String
+struct GoalCard: Codable, Sendable, Identifiable {
+    var id: UUID = UUID()
+    var goal: String
+    var activities: String
+    var observations: String
+    var nextSteps: String
 
-    static func fromJSON(_ json: String) -> [CustomSection] {
+    static func fromJSON(_ json: String) -> [GoalCard] {
         guard let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([CustomSection].self, from: data)) ?? []
+        return (try? JSONDecoder().decode([GoalCard].self, from: data)) ?? []
     }
 
-    static func toJSON(_ sections: [CustomSection]) -> String? {
-        guard let data = try? JSONEncoder().encode(sections) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-}
-
-struct CustomTableData: Codable, Sendable {
-    var columns: [String]
-    var rows: [[String]]
-
-    static func fromJSON(_ json: String) -> CustomTableData? {
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(CustomTableData.self, from: data)
-    }
-
-    func toJSON() -> String? {
-        guard let data = try? JSONEncoder().encode(self) else { return nil }
+    static func toJSON(_ goals: [GoalCard]) -> String? {
+        guard let data = try? JSONEncoder().encode(goals) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }
@@ -34,8 +22,10 @@ struct CustomTableData: Codable, Sendable {
 @Model
 final class SessionNote {
     var id: UUID
+    var sessionID: UUID
     var clientInitials: String
     var noteFormatRaw: String
+    var toneRaw: String
     var date: Date
     var transcript: String?
 
@@ -48,39 +38,34 @@ final class SessionNote {
     var timeSpent: String
     var interventionsUsed: String
 
-    var templateName: String?
-    var customSectionsJSON: String?
-    var customTableJSON: String?
-    var isTableFormat: Bool
+    var sessionObservations: String = ""
+    var goalsJSON: String?
+
+    var goalCards: [GoalCard] {
+        get {
+            guard let json = goalsJSON else { return [] }
+            return GoalCard.fromJSON(json)
+        }
+        set {
+            goalsJSON = GoalCard.toJSON(newValue)
+        }
+    }
 
     var noteFormat: NoteFormat {
         get { NoteFormat(rawValue: noteFormatRaw) ?? .soap }
         set { noteFormatRaw = newValue.rawValue }
     }
 
-    var customSections: [CustomSection] {
-        get {
-            guard let json = customSectionsJSON else { return [] }
-            return CustomSection.fromJSON(json)
-        }
-        set {
-            customSectionsJSON = CustomSection.toJSON(newValue)
-        }
-    }
-
-    var customTableData: CustomTableData? {
-        get {
-            guard let json = customTableJSON else { return nil }
-            return CustomTableData.fromJSON(json)
-        }
-        set {
-            customTableJSON = newValue?.toJSON()
-        }
+    var tone: NoteTone {
+        get { NoteTone(rawValue: toneRaw) ?? .standard }
+        set { toneRaw = newValue.rawValue }
     }
 
     init(
         clientInitials: String,
         noteFormat: NoteFormat,
+        tone: NoteTone = .standard,
+        sessionID: UUID = UUID(),
         transcript: String?,
         subjective: String = "",
         objective: String = "",
@@ -90,14 +75,14 @@ final class SessionNote {
         goalsAddressed: String = "",
         timeSpent: String = "",
         interventionsUsed: String = "",
-        templateName: String? = nil,
-        customSections: [CustomSection] = [],
-        customTableData: CustomTableData? = nil,
-        isTableFormat: Bool = false
+        sessionObservations: String = "",
+        goalCards: [GoalCard] = []
     ) {
         self.id = UUID()
+        self.sessionID = sessionID
         self.clientInitials = clientInitials
         self.noteFormatRaw = noteFormat.rawValue
+        self.toneRaw = tone.rawValue
         self.date = Date()
         self.transcript = transcript
         self.subjective = subjective
@@ -108,13 +93,9 @@ final class SessionNote {
         self.goalsAddressed = goalsAddressed
         self.timeSpent = timeSpent
         self.interventionsUsed = interventionsUsed
-        self.templateName = templateName
-        self.isTableFormat = isTableFormat
-        if !customSections.isEmpty {
-            self.customSectionsJSON = CustomSection.toJSON(customSections)
-        }
-        if let customTableData {
-            self.customTableJSON = customTableData.toJSON()
+        self.sessionObservations = sessionObservations
+        if !goalCards.isEmpty {
+            self.goalsJSON = GoalCard.toJSON(goalCards)
         }
     }
 
@@ -139,16 +120,17 @@ final class SessionNote {
                 ("Time Spent", \.timeSpent),
                 ("Interventions Used", \.interventionsUsed)
             ]
-        case .custom:
+        case .goalFocused:
             return []
         }
     }
 
     var displayName: String {
-        if noteFormat == .custom, let name = templateName {
-            return name
-        }
-        return noteFormat.rawValue
+        noteFormat.rawValue
+    }
+
+    var toneLabel: String {
+        tone == .standard ? "" : tone.rawValue
     }
 
     func asPlainText() -> String {
@@ -157,24 +139,26 @@ final class SessionNote {
         text += "Date: \(date.formatted(date: .long, time: .shortened))\n"
         text += String(repeating: "-", count: 40) + "\n\n"
 
-        if noteFormat == .custom && isTableFormat, let table = customTableData {
-            for (i, row) in table.rows.enumerated() {
-                let header = table.columns.first ?? "Entry"
-                text += "\(header) \(i + 1): \(row.first ?? "")\n"
+        if noteFormat == .goalFocused {
+            if !sessionObservations.isEmpty {
+                text += "Session Observations:\n\(sessionObservations)\n\n"
+            }
 
-                for colIndex in 1..<table.columns.count {
-                    let value = colIndex < row.count ? row[colIndex] : ""
-                    if !value.isEmpty {
-                        text += "  \(table.columns[colIndex]): \(value)\n"
-                    }
+            let cards = goalCards
+            let useNumbering = cards.count > 1
+            for (i, goal) in cards.enumerated() {
+                let header = useNumbering ? "Goal \(i + 1): \(goal.goal)" : "Goal: \(goal.goal)"
+                text += "\(header)\n"
+                if !goal.activities.isEmpty {
+                    text += "  Activities: \(goal.activities)\n"
+                }
+                if !goal.observations.isEmpty {
+                    text += "  Observations: \(goal.observations)\n"
+                }
+                if !goal.nextSteps.isEmpty {
+                    text += "  Next Steps: \(goal.nextSteps)\n"
                 }
                 text += "\n"
-            }
-        } else if noteFormat == .custom {
-            for section in customSections {
-                if !section.content.isEmpty {
-                    text += "\(section.title):\n\(section.content)\n\n"
-                }
             }
         } else {
             for section in sections {

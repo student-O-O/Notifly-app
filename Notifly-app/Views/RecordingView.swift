@@ -4,9 +4,10 @@ import FoundationModels
 struct RecordingView: View {
     let clientInitials: String
     let noteFormat: NoteFormat
-    var customTemplate: NoteTemplate?
+    var tone: NoteTone = .standard
     var onComplete: () -> Void
 
+    let sessionID = UUID()
     @State private var speechRecognizer = SpeechRecognizer()
     @State private var isAuthorized = false
     @State private var showReview = false
@@ -24,7 +25,7 @@ struct RecordingView: View {
         .navigationTitle("Recording")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(speechRecognizer.isRecording)
+        .navigationBarBackButtonHidden(speechRecognizer.isRecording || speechRecognizer.isTranscribing)
         #endif
         .task {
             isAuthorized = await SpeechRecognizer.requestAuthorization()
@@ -33,8 +34,9 @@ struct RecordingView: View {
             ReviewNoteView(
                 clientInitials: clientInitials,
                 noteFormat: noteFormat,
+                tone: tone,
+                sessionID: sessionID,
                 transcript: speechRecognizer.transcript,
-                customTemplate: customTemplate,
                 onComplete: onComplete
             )
         }
@@ -51,10 +53,21 @@ struct RecordingView: View {
     private var recordingContent: some View {
         VStack(spacing: 24) {
             ScrollView {
-                Text(speechRecognizer.transcript.isEmpty ? "Tap the microphone to begin recording..." : speechRecognizer.transcript)
-                    .foregroundStyle(speechRecognizer.transcript.isEmpty ? .secondary : .primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
+                if speechRecognizer.isTranscribing {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text(speechRecognizer.transcribingProgress.isEmpty ? "Transcribing recording..." : speechRecognizer.transcribingProgress)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    Text(promptText)
+                        .foregroundStyle(speechRecognizer.transcript.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
             }
             .frame(maxHeight: .infinity)
 
@@ -72,7 +85,7 @@ struct RecordingView: View {
 
                 recordButton
 
-                if !speechRecognizer.isRecording && !speechRecognizer.transcript.isEmpty {
+                if !speechRecognizer.isRecording && !speechRecognizer.isTranscribing && !speechRecognizer.transcript.isEmpty {
                     Button {
                         showReview = true
                     } label: {
@@ -86,10 +99,20 @@ struct RecordingView: View {
         }
     }
 
+    private var promptText: String {
+        if speechRecognizer.isRecording {
+            return "Recording... Tap stop when finished."
+        }
+        if speechRecognizer.transcript.isEmpty {
+            return "Tap the microphone to begin recording..."
+        }
+        return speechRecognizer.transcript
+    }
+
     private var recordButton: some View {
         Button {
             if speechRecognizer.isRecording {
-                stopRecording()
+                Task { await stopRecording() }
             } else {
                 startRecording()
             }
@@ -104,6 +127,8 @@ struct RecordingView: View {
                     .foregroundStyle(.white)
             }
         }
+        .disabled(speechRecognizer.isTranscribing)
+        .opacity(speechRecognizer.isTranscribing ? 0.4 : 1.0)
         .accessibilityLabel(speechRecognizer.isRecording ? "Stop Recording" : "Start Recording")
     }
 
@@ -125,9 +150,9 @@ struct RecordingView: View {
         }
     }
 
-    private func stopRecording() {
-        speechRecognizer.stopRecording()
+    private func stopRecording() async {
         timer?.invalidate()
         timer = nil
+        await speechRecognizer.stopRecording()
     }
 }

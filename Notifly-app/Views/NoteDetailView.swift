@@ -11,6 +11,9 @@ struct NoteDetailView: View {
     @State private var showTranscript = false
     @State private var showDeleteTranscriptAlert = false
     @State private var showCopiedToast = false
+    @State private var showRegenerateSheet = false
+    @State private var regenerateTone: NoteTone = .standard
+    @State private var navigateToRegenerated = false
 
     var body: some View {
         Form {
@@ -23,6 +26,19 @@ struct NoteDetailView: View {
             noteSections
 
             exportSection
+
+            if note.transcript?.isEmpty == false {
+                Section {
+                    Button {
+                        regenerateTone = note.tone
+                        showRegenerateSheet = true
+                    } label: {
+                        Label("Generate Another Note", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+                }
+            }
         }
         .navigationTitle("\(note.displayName) Note")
         #if os(iOS)
@@ -40,6 +56,19 @@ struct NoteDetailView: View {
                 copiedToast
             }
         }
+        .sheet(isPresented: $showRegenerateSheet) {
+            regenerateSheet
+        }
+        .navigationDestination(isPresented: $navigateToRegenerated) {
+            ReviewNoteView(
+                clientInitials: note.clientInitials,
+                noteFormat: note.noteFormat,
+                tone: regenerateTone,
+                sessionID: note.sessionID,
+                transcript: note.transcript ?? "",
+                onComplete: {}
+            )
+        }
         .alert("Delete Transcript?", isPresented: $showDeleteTranscriptAlert) {
             Button("Delete", role: .destructive) {
                 note.transcript = nil
@@ -55,6 +84,7 @@ struct NoteDetailView: View {
             LabeledContent("Client", value: note.clientInitials)
             LabeledContent("Date", value: note.date.formatted(date: .long, time: .shortened))
             LabeledContent("Format", value: note.displayName)
+            LabeledContent("Tone", value: note.tone.rawValue)
         }
     }
 
@@ -75,10 +105,8 @@ struct NoteDetailView: View {
 
     @ViewBuilder
     private var noteSections: some View {
-        if note.noteFormat == .custom && note.isTableFormat {
-            tableNoteSections
-        } else if note.noteFormat == .custom {
-            customNoteSections
+        if note.noteFormat == .goalFocused {
+            goalFocusedSections
         } else {
             builtInNoteSections
         }
@@ -109,108 +137,104 @@ struct NoteDetailView: View {
     }
 
     @ViewBuilder
-    private var customNoteSections: some View {
-        let sections = note.customSections
-        ForEach(sections.indices, id: \.self) { index in
-            Section(sections[index].title) {
-                if isEditing {
-                    TextEditor(text: Binding(
-                        get: { note.customSections[index].content },
-                        set: {
-                            var updated = note.customSections
-                            updated[index].content = $0
-                            note.customSections = updated
-                        }
-                    ))
+    private var goalFocusedSections: some View {
+        Section("Session Observations") {
+            if isEditing {
+                TextEditor(text: $note.sessionObservations)
                     .frame(minHeight: 60)
+            } else if note.sessionObservations.isEmpty {
+                Text("No content")
+                    .foregroundStyle(.tertiary)
+                    .italic()
+            } else {
+                Text(note.sessionObservations)
+            }
+        }
+
+        let cards = note.goalCards
+        ForEach(cards.indices, id: \.self) { index in
+            Section {
+                if isEditing {
+                    TextField("Goal", text: Binding(
+                        get: { note.goalCards.indices.contains(index) ? note.goalCards[index].goal : "" },
+                        set: { newValue in
+                            var updated = note.goalCards
+                            guard updated.indices.contains(index) else { return }
+                            updated[index].goal = newValue
+                            note.goalCards = updated
+                        }
+                    ), axis: .vertical)
+                        .font(.headline)
+                        .padding(.vertical, 4)
+
+                    goalFieldEditor("Activities", index: index, keyPath: \.activities)
+                    goalFieldEditor("Observations", index: index, keyPath: \.observations)
+                    goalFieldEditor("Next Steps", index: index, keyPath: \.nextSteps)
                 } else {
-                    if sections[index].content.isEmpty {
-                        Text("No content")
-                            .foregroundStyle(.tertiary)
-                            .italic()
-                    } else {
-                        Text(sections[index].content)
+                    Text(cards[index].goal)
+                        .font(.headline)
+                        .padding(.vertical, 4)
+
+                    goalFieldDisplay("Activities", value: cards[index].activities)
+                    goalFieldDisplay("Observations", value: cards[index].observations)
+                    goalFieldDisplay("Next Steps", value: cards[index].nextSteps)
+                }
+            } header: {
+                Text(cards.count > 1 ? "Goal \(index + 1)" : "Goal")
+            }
+        }
+
+        if isEditing {
+            Section {
+                Button {
+                    var updated = note.goalCards
+                    updated.append(GoalCard(goal: "", activities: "", observations: "", nextSteps: ""))
+                    note.goalCards = updated
+                } label: {
+                    Label("Add Goal", systemImage: "plus.circle")
+                }
+
+                if !note.goalCards.isEmpty {
+                    Button(role: .destructive) {
+                        var updated = note.goalCards
+                        updated.removeLast()
+                        note.goalCards = updated
+                    } label: {
+                        Label("Remove Last Goal", systemImage: "minus.circle")
                     }
                 }
             }
         }
     }
 
+    private func goalFieldEditor(_ label: String, index: Int, keyPath: WritableKeyPath<GoalCard, String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: Binding(
+                get: { note.goalCards.indices.contains(index) ? note.goalCards[index][keyPath: keyPath] : "" },
+                set: { newValue in
+                    var updated = note.goalCards
+                    guard updated.indices.contains(index) else { return }
+                    updated[index][keyPath: keyPath] = newValue
+                    note.goalCards = updated
+                }
+            ))
+            .frame(minHeight: 60)
+        }
+    }
+
     @ViewBuilder
-    private var tableNoteSections: some View {
-        if let table = note.customTableData {
-            ForEach(table.rows.indices, id: \.self) { rowIndex in
-                Section {
-                    if isEditing {
-                        ForEach(table.columns.indices, id: \.self) { colIndex in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(table.columns[colIndex])
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                TextEditor(text: Binding(
-                                    get: {
-                                        guard let t = note.customTableData,
-                                              rowIndex < t.rows.count,
-                                              colIndex < t.rows[rowIndex].count else { return "" }
-                                        return t.rows[rowIndex][colIndex]
-                                    },
-                                    set: {
-                                        var updated = note.customTableData
-                                        updated?.rows[rowIndex][colIndex] = $0
-                                        note.customTableData = updated
-                                    }
-                                ))
-                                .frame(minHeight: 60)
-                            }
-                        }
-                    } else {
-                        Text(table.rows[rowIndex].first ?? "")
-                            .font(.headline)
-                            .padding(.vertical, 4)
-
-                        ForEach(1..<table.columns.count, id: \.self) { colIndex in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(table.columns[colIndex])
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(table.rows[rowIndex][colIndex])
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                } header: {
-                    Text("\(table.columns.first ?? "Entry") \(rowIndex + 1)")
-                }
+    private func goalFieldDisplay(_ label: String, value: String) -> some View {
+        if !value.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
             }
-
-            if isEditing {
-                Section {
-                    Button {
-                        var updated = note.customTableData
-                        let emptyRow = Array(repeating: "", count: table.columns.count)
-                        updated?.rows.append(emptyRow)
-                        note.customTableData = updated
-                    } label: {
-                        Label("Add \(table.columns.first ?? "Entry")", systemImage: "plus.circle")
-                    }
-
-                    if !table.rows.isEmpty {
-                        Button(role: .destructive) {
-                            var updated = note.customTableData
-                            updated?.rows.removeLast()
-                            note.customTableData = updated
-                        } label: {
-                            Label("Remove Last", systemImage: "minus.circle")
-                        }
-                    }
-                }
-            }
-        } else {
-            Section {
-                Text("No data")
-                    .foregroundStyle(.tertiary)
-                    .italic()
-            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -238,6 +262,45 @@ struct NoteDetailView: View {
 
             ShareLink(item: note.asPlainText()) {
                 Label("Share Note", systemImage: "square.and.arrow.up")
+            }
+        }
+    }
+
+    private var regenerateSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Select Tone") {
+                    Picker("Tone", selection: $regenerateTone) {
+                        ForEach(NoteTone.allCases) { t in
+                            Text(t.rawValue).tag(t)
+                        }
+                    }
+                    .pickerStyle(.inline)
+
+                    Text(regenerateTone.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Button {
+                        showRegenerateSheet = false
+                        navigateToRegenerated = true
+                    } label: {
+                        Label("Generate Note", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+                }
+            }
+            .navigationTitle("Generate Another Note")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showRegenerateSheet = false }
+                }
             }
         }
     }

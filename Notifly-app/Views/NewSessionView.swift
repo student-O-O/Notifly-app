@@ -3,19 +3,11 @@ import SwiftData
 
 struct NewSessionView: View {
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \NoteTemplate.dateCreated, order: .reverse) private var templates: [NoteTemplate]
 
     @State private var clientInitials = ""
-    @State private var selectedFormatID: String = NoteFormat.soap.rawValue
+    @State private var noteFormat: NoteFormat = .soap
+    @State private var selectedTone: NoteTone = .standard
     @State private var navigateToRecording = false
-
-    private var noteFormat: NoteFormat {
-        NoteFormat(rawValue: selectedFormatID) ?? .custom
-    }
-
-    private var selectedTemplate: NoteTemplate? {
-        templates.first(where: { $0.id.uuidString == selectedFormatID })
-    }
 
     var body: some View {
         NavigationStack {
@@ -29,30 +21,26 @@ struct NewSessionView: View {
                 }
 
                 Section("Format") {
-                    Picker("Format", selection: $selectedFormatID) {
-                        ForEach(NoteFormat.builtInFormats) { format in
-                            Text(format.rawValue).tag(format.rawValue)
+                    Picker("Format", selection: $noteFormat) {
+                        ForEach(NoteFormat.allCases) { format in
+                            Text(format.rawValue).tag(format)
                         }
+                    }
+                    .pickerStyle(.segmented)
 
-                        if !templates.isEmpty {
-                            Divider()
+                    Text(formatDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-                            ForEach(templates) { template in
-                                HStack {
-                                    Text(template.name)
-                                    Text("Custom")
-                                        .font(.caption2.weight(.medium))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.fill.tertiary)
-                                        .clipShape(Capsule())
-                                }
-                                .tag(template.id.uuidString)
-                            }
+                Section("Tone") {
+                    Picker("Tone", selection: $selectedTone) {
+                        ForEach(NoteTone.allCases) { tone in
+                            Text(tone.rawValue).tag(tone)
                         }
                     }
 
-                    Text(formatDescription)
+                    Text(selectedTone.description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -81,7 +69,7 @@ struct NewSessionView: View {
                 RecordingView(
                     clientInitials: clientInitials.trimmingCharacters(in: .whitespaces),
                     noteFormat: noteFormat,
-                    customTemplate: selectedTemplate,
+                    tone: selectedTone,
                     onComplete: { dismiss() }
                 )
             }
@@ -89,11 +77,7 @@ struct NewSessionView: View {
     }
 
     private var canStart: Bool {
-        let hasInitials = !clientInitials.trimmingCharacters(in: .whitespaces).isEmpty
-        if noteFormat == .custom {
-            return hasInitials && selectedTemplate != nil
-        }
-        return hasInitials
+        !clientInitials.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var formatDescription: String {
@@ -102,11 +86,8 @@ struct NewSessionView: View {
             return "Subjective, Objective, Assessment, Plan"
         case .dap:
             return "Data, Assessment, Plan"
-        case .custom:
-            if let template = selectedTemplate {
-                return template.sectionTitles.joined(separator: ", ")
-            }
-            return "Select a template from the dropdown"
+        case .goalFocused:
+            return "Session observations and per-goal breakdown"
         }
     }
 }
