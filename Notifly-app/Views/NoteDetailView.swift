@@ -82,7 +82,11 @@ struct NoteDetailView: View {
     private var headerSection: some View {
         Section {
             LabeledContent("Client", value: note.clientInitials)
-            LabeledContent("Date", value: note.date.formatted(date: .long, time: .shortened))
+            if isEditing {
+                DatePicker("Date", selection: $note.date)
+            } else {
+                LabeledContent("Date", value: note.date.formatted(date: .long, time: .shortened))
+            }
             LabeledContent("Format", value: note.displayName)
             LabeledContent("Tone", value: note.tone.rawValue)
         }

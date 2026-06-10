@@ -13,6 +13,7 @@ struct RecordingView: View {
     @State private var showReview = false
     @State private var elapsedSeconds = 0
     @State private var timer: Timer?
+    @State private var didAutoStart = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +30,10 @@ struct RecordingView: View {
         #endif
         .task {
             isAuthorized = await SpeechRecognizer.requestAuthorization()
+            if isAuthorized && !didAutoStart {
+                didAutoStart = true
+                startRecording()
+            }
         }
         .navigationDestination(isPresented: $showReview) {
             ReviewNoteView(
@@ -110,7 +115,7 @@ struct RecordingView: View {
             return "Recording... Tap stop when finished."
         }
         if speechRecognizer.transcript.isEmpty {
-            return "Tap the microphone to begin recording..."
+            return "Preparing microphone..."
         }
         return speechRecognizer.transcript
     }
