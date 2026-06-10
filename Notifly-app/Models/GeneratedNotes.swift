@@ -34,14 +34,13 @@ struct GeneratedGoal {
     var activities: String
 
     @Guide(description: """
-        Past-tense sequence of what occurred. Minimum 3 sentences. Structure: trigger first \
-        (what the OT or peer said/did), then the client's response. \
-        1. Identify the speaker before every quote — never assign a quote without naming who said it. \
-        2. Reproduce client quotes verbatim in single quotes — never paraphrase. \
-        3. Include every measurable detail: duration, prompts required, frequency, independence level. \
-        4. Write specific observable behaviour, not interpretive labels \
+        Past-tense clinical summary of what occurred. \
+        Structure: trigger first (what the OT or peer said/did), then the client's response. \
+        1. Preserve measurable details (duration, prompts required, frequency, independence level) verbatim. \
+        2. Write specific observable behaviour, not interpretive labels \
             ('client turned the paper over', not 'client showed frustration'). \
-        5. No future-tense content.
+        3. No future-tense content. \
+        Length is whatever it takes to capture every measurable observation — no padding, no compression for its own sake.
         """)
     var observations: String
 
