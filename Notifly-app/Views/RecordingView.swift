@@ -79,6 +79,12 @@ struct RecordingView: View {
             }
 
             VStack(spacing: 16) {
+                if speechRecognizer.isRecording {
+                    levelMeter
+                        .padding(.horizontal, 40)
+                        .transition(.opacity)
+                }
+
                 Text(formattedTime)
                     .font(.system(.title2, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -118,6 +124,16 @@ struct RecordingView: View {
             }
         } label: {
             ZStack {
+                // Outer pulsing ring that scales with mic input level while recording
+                if speechRecognizer.isRecording {
+                    Circle()
+                        .stroke(Color.red.opacity(0.35), lineWidth: 4)
+                        .frame(width: 80, height: 80)
+                        .scaleEffect(1.0 + CGFloat(speechRecognizer.inputLevel) * 0.6)
+                        .opacity(0.6 + Double(speechRecognizer.inputLevel) * 0.4)
+                        .animation(.easeOut(duration: 0.12), value: speechRecognizer.inputLevel)
+                }
+
                 Circle()
                     .fill(speechRecognizer.isRecording ? .red : .accentColor)
                     .frame(width: 80, height: 80)
@@ -130,6 +146,21 @@ struct RecordingView: View {
         .disabled(speechRecognizer.isTranscribing)
         .opacity(speechRecognizer.isTranscribing ? 0.4 : 1.0)
         .accessibilityLabel(speechRecognizer.isRecording ? "Stop Recording" : "Start Recording")
+    }
+
+    @ViewBuilder
+    private var levelMeter: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<14, id: \.self) { i in
+                let threshold = Float(i) / 14.0
+                Capsule()
+                    .fill(speechRecognizer.inputLevel > threshold ? Color.red.opacity(0.85) : Color.gray.opacity(0.25))
+                    .frame(width: 4, height: 16 + CGFloat(i) * 1.5)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.easeOut(duration: 0.08), value: speechRecognizer.inputLevel)
+        .accessibilityLabel("Microphone input level")
     }
 
     private var formattedTime: String {
