@@ -7,6 +7,7 @@ import AVFoundation
 class SpeechRecognizer {
     var transcript = ""
     var isRecording = false
+    var isPaused = false
     var isTranscribing = false
     var transcribingProgress: String = ""
     var errorMessage: String?
@@ -73,8 +74,25 @@ class SpeechRecognizer {
         }
         audioRecorder = recorder
         isRecording = true
+        isPaused = false
         startLevelMonitoring()
         print("[SpeechRecognizer] Recording to \(url.lastPathComponent)")
+    }
+
+    func pauseRecording() {
+        guard isRecording, !isPaused, let recorder = audioRecorder else { return }
+        recorder.pause()
+        isPaused = true
+        stopLevelMonitoring()
+        inputLevel = 0
+    }
+
+    func resumeRecording() {
+        guard isRecording, isPaused, let recorder = audioRecorder else { return }
+        if recorder.record() {
+            isPaused = false
+            startLevelMonitoring()
+        }
     }
 
     func stopRecording() async {
@@ -88,6 +106,7 @@ class SpeechRecognizer {
         recorder.stop()
         audioRecorder = nil
         isRecording = false
+        isPaused = false
         inputLevel = 0
         print("[SpeechRecognizer] Recording stopped. Starting transcription...")
 

@@ -20,29 +20,30 @@ struct NewSessionView: View {
                         .autocorrectionDisabled()
                 }
 
-                Section("Format") {
+                Section {
                     Picker("Format", selection: $noteFormat) {
                         ForEach(NoteFormat.allCases) { format in
                             Text(format.rawValue).tag(format)
                         }
                     }
-                    .pickerStyle(.segmented)
-
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Format")
+                } footer: {
                     Text(formatDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
-                Section("Tone") {
+                Section {
                     Picker("Tone", selection: $selectedTone) {
                         ForEach(NoteTone.allCases) { tone in
                             Text(tone.rawValue).tag(tone)
                         }
                     }
-
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Tone")
+                } footer: {
                     Text(selectedTone.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {

@@ -83,24 +83,32 @@ struct RecordingView: View {
                     .padding(.horizontal)
             }
 
-            VStack(spacing: 16) {
-                if speechRecognizer.isRecording {
-                    levelMeter
-                        .padding(.horizontal, 40)
-                        .transition(.opacity)
-                }
-
+            VStack(spacing: 24) {
                 Text(formattedTime)
                     .font(.system(.title2, design: .monospaced))
                     .foregroundStyle(.secondary)
 
                 recordButton
+                    .frame(width: 220, height: 220)
 
-                if !speechRecognizer.isRecording && !speechRecognizer.isTranscribing && !speechRecognizer.transcript.isEmpty {
+                if speechRecognizer.isRecording {
+                    Button {
+                        Task {
+                            await stopRecording()
+                            if !speechRecognizer.transcript.isEmpty {
+                                showReview = true
+                            }
+                        }
+                    } label: {
+                        Label("Generate Note", systemImage: "sparkles")
+                            .font(.headline)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else if !speechRecognizer.isTranscribing && !speechRecognizer.transcript.isEmpty {
                     Button {
                         showReview = true
                     } label: {
-                        Label("Continue to Review", systemImage: "arrow.right.circle.fill")
+                        Label("Generate Note", systemImage: "sparkles")
                             .font(.headline)
                     }
                     .buttonStyle(.borderedProminent)
@@ -112,7 +120,10 @@ struct RecordingView: View {
 
     private var promptText: String {
         if speechRecognizer.isRecording {
-            return "Recording... Tap stop when finished."
+            if speechRecognizer.isPaused {
+                return "Paused. Tap the orb to resume, or Generate Note to finish."
+            }
+            return "Recording... Tap the orb to pause, or Generate Note when finished."
         }
         if speechRecognizer.transcript.isEmpty {
             return "Preparing microphone..."
@@ -123,49 +134,115 @@ struct RecordingView: View {
     private var recordButton: some View {
         Button {
             if speechRecognizer.isRecording {
-                Task { await stopRecording() }
+                if speechRecognizer.isPaused {
+                    speechRecognizer.resumeRecording()
+                    startTimer()
+                } else {
+                    speechRecognizer.pauseRecording()
+                    pauseTimer()
+                }
             } else {
                 startRecording()
             }
         } label: {
-            ZStack {
-                // Outer pulsing ring that scales with mic input level while recording
-                if speechRecognizer.isRecording {
-                    Circle()
-                        .stroke(Color.red.opacity(0.35), lineWidth: 4)
-                        .frame(width: 80, height: 80)
-                        .scaleEffect(1.0 + CGFloat(speechRecognizer.inputLevel) * 0.6)
-                        .opacity(0.6 + Double(speechRecognizer.inputLevel) * 0.4)
-                        .animation(.easeOut(duration: 0.12), value: speechRecognizer.inputLevel)
-                }
-
-                Circle()
-                    .fill(speechRecognizer.isRecording ? .red : .accentColor)
-                    .frame(width: 80, height: 80)
-
-                Image(systemName: speechRecognizer.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
+            if speechRecognizer.isRecording {
+                siriOrb
+            } else {
+                idleMicButton
             }
         }
+        .buttonStyle(.plain)
         .disabled(speechRecognizer.isTranscribing)
         .opacity(speechRecognizer.isTranscribing ? 0.4 : 1.0)
-        .accessibilityLabel(speechRecognizer.isRecording ? "Stop Recording" : "Start Recording")
+        .accessibilityLabel(recordButtonAccessibilityLabel)
     }
 
-    @ViewBuilder
-    private var levelMeter: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<14, id: \.self) { i in
-                let threshold = Float(i) / 14.0
-                Capsule()
-                    .fill(speechRecognizer.inputLevel > threshold ? Color.red.opacity(0.85) : Color.gray.opacity(0.25))
-                    .frame(width: 4, height: 16 + CGFloat(i) * 1.5)
-            }
+    private var recordButtonAccessibilityLabel: String {
+        if !speechRecognizer.isRecording { return "Start Recording" }
+        return speechRecognizer.isPaused ? "Resume Recording" : "Pause Recording"
+    }
+
+    private var idleMicButton: some View {
+        ZStack {
+            Circle()
+                .fill(Color.accentColor.gradient)
+                .frame(width: 90, height: 90)
+                .shadow(color: .accentColor.opacity(0.4), radius: 14, y: 4)
+
+            Image(systemName: "mic.fill")
+                .font(.system(size: 32, weight: .medium))
+                .foregroundStyle(.white)
         }
-        .frame(maxWidth: .infinity)
-        .animation(.easeOut(duration: 0.08), value: speechRecognizer.inputLevel)
-        .accessibilityLabel("Microphone input level")
+    }
+
+    private var siriOrb: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let level = CGFloat(speechRecognizer.inputLevel)
+            let breath = sin(t * 1.6) * 0.5 + 0.5
+            let paused = speechRecognizer.isPaused
+
+            ZStack {
+                // Soft outer aura — breathes slowly, swells with audio
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                .pink.opacity(0.55),
+                                .red.opacity(0.35),
+                                .clear
+                            ],
+                            center: .center,
+                            startRadius: 10,
+                            endRadius: 110
+                        )
+                    )
+                    .frame(width: 220, height: 220)
+                    .scaleEffect(0.85 + level * 0.35 + breath * 0.06)
+                    .opacity(0.55 + Double(level) * 0.45)
+                    .blur(radius: 20)
+
+                // Rotating angular gradient ring — gives the orb its "Siri" colour life
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [.purple, .pink, .red, .orange, .pink, .purple],
+                            center: .center
+                        )
+                    )
+                    .frame(width: 140, height: 140)
+                    .scaleEffect(1.0 + level * 0.22 + breath * 0.03)
+                    .rotationEffect(.degrees(t * 28))
+                    .blur(radius: 14)
+                    .opacity(0.85)
+
+                // Inner glossy core — the actual tap target visual
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.red, Color.pink],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 90, height: 90)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                    )
+                    .shadow(color: .red.opacity(0.55), radius: 12, y: 3)
+                    .scaleEffect(1.0 + level * 0.06)
+
+                // Glyph: pause when recording, play when paused
+                Image(systemName: paused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .opacity(paused ? 0.7 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: speechRecognizer.inputLevel)
+            .animation(.easeInOut(duration: 0.2), value: paused)
+        }
+        .accessibilityLabel(speechRecognizer.isPaused ? "Resume Recording" : "Pause Recording")
     }
 
     private var formattedTime: String {
@@ -178,17 +255,26 @@ struct RecordingView: View {
         do {
             try speechRecognizer.startRecording()
             elapsedSeconds = 0
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-                elapsedSeconds += 1
-            }
+            startTimer()
         } catch {
             speechRecognizer.errorMessage = "Failed to start recording: \(error.localizedDescription)"
         }
     }
 
-    private func stopRecording() async {
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            elapsedSeconds += 1
+        }
+    }
+
+    private func pauseTimer() {
         timer?.invalidate()
         timer = nil
+    }
+
+    private func stopRecording() async {
+        pauseTimer()
         await speechRecognizer.stopRecording()
     }
 }
