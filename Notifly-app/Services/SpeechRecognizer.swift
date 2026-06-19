@@ -49,7 +49,7 @@ class SpeechRecognizer {
 
         #if os(iOS)
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.record, mode: .voiceChat, options: .duckOthers)
+        try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         #endif
 

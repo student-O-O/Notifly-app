@@ -2,12 +2,25 @@ import SwiftUI
 import SwiftData
 
 struct NewSessionView: View {
+    @Binding var isPresented: Bool
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("defaultNoteFormat") private var defaultFormatRaw: String = NoteFormat.soap.rawValue
+
     @State private var clientInitials = ""
-    @State private var noteFormat: NoteFormat = .soap
+    @State private var noteFormat: NoteFormat
     @State private var selectedTone: NoteTone = .standard
     @State private var navigateToRecording = false
+
+    init(isPresented: Binding<Bool>) {
+        self._isPresented = isPresented
+        let storedRaw = UserDefaults.standard.string(forKey: "defaultNoteFormat") ?? NoteFormat.soap.rawValue
+        _noteFormat = State(initialValue: NoteFormat(rawValue: storedRaw) ?? .soap)
+    }
+
+    private var defaultFormat: NoteFormat {
+        NoteFormat(rawValue: defaultFormatRaw) ?? .soap
+    }
 
     var body: some View {
         NavigationStack {
@@ -27,6 +40,19 @@ struct NewSessionView: View {
                         }
                     }
                     .pickerStyle(.menu)
+
+                    if noteFormat == defaultFormat {
+                        Label("Default for new sessions", systemImage: "star.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button {
+                            defaultFormatRaw = noteFormat.rawValue
+                        } label: {
+                            Label("Set \(noteFormat.rawValue) as Default", systemImage: "star")
+                                .font(.caption)
+                        }
+                    }
                 } header: {
                     Text("Format")
                 } footer: {
@@ -71,7 +97,7 @@ struct NewSessionView: View {
                     clientInitials: clientInitials.trimmingCharacters(in: .whitespaces),
                     noteFormat: noteFormat,
                     tone: selectedTone,
-                    onComplete: { dismiss() }
+                    dismissSheet: $isPresented
                 )
             }
         }

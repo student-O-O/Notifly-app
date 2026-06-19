@@ -6,6 +6,7 @@ import AppKit
 
 struct NoteDetailView: View {
     @Bindable var note: SessionNote
+    var popToRoot: () -> Void = {}
     @Environment(\.modelContext) private var modelContext
     @State private var isEditing = false
     @State private var showTranscript = false
@@ -13,6 +14,7 @@ struct NoteDetailView: View {
     @State private var showCopiedToast = false
     @State private var showRegenerateSheet = false
     @State private var regenerateTone: NoteTone = .standard
+    @State private var regenerateFormat: NoteFormat = .soap
     @State private var navigateToRegenerated = false
 
     var body: some View {
@@ -31,6 +33,7 @@ struct NoteDetailView: View {
                 Section {
                     Button {
                         regenerateTone = note.tone
+                        regenerateFormat = note.noteFormat
                         showRegenerateSheet = true
                     } label: {
                         Label("Generate Another Note", systemImage: "arrow.triangle.2.circlepath")
@@ -62,11 +65,11 @@ struct NoteDetailView: View {
         .navigationDestination(isPresented: $navigateToRegenerated) {
             ReviewNoteView(
                 clientInitials: note.clientInitials,
-                noteFormat: note.noteFormat,
+                noteFormat: regenerateFormat,
                 tone: regenerateTone,
                 sessionID: note.sessionID,
                 transcript: note.transcript ?? "",
-                onComplete: {}
+                dismissSheet: regeneratedDoneBinding
             )
         }
         .alert("Delete Transcript?", isPresented: $showDeleteTranscriptAlert) {
@@ -273,17 +276,30 @@ struct NoteDetailView: View {
     private var regenerateSheet: some View {
         NavigationStack {
             Form {
-                Section("Select Tone") {
+                Section {
+                    Picker("Format", selection: $regenerateFormat) {
+                        ForEach(NoteFormat.allCases) { format in
+                            Text(format.rawValue).tag(format)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Format")
+                } footer: {
+                    Text(formatDescription(regenerateFormat))
+                }
+
+                Section {
                     Picker("Tone", selection: $regenerateTone) {
                         ForEach(NoteTone.allCases) { t in
                             Text(t.rawValue).tag(t)
                         }
                     }
-                    .pickerStyle(.inline)
-
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Tone")
+                } footer: {
                     Text(regenerateTone.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -306,6 +322,30 @@ struct NoteDetailView: View {
                     Button("Cancel") { showRegenerateSheet = false }
                 }
             }
+        }
+    }
+
+    private var regeneratedDoneBinding: Binding<Bool> {
+        Binding(
+            get: { navigateToRegenerated },
+            set: { newValue in
+                if newValue {
+                    navigateToRegenerated = true
+                } else {
+                    popToRoot()
+                }
+            }
+        )
+    }
+
+    private func formatDescription(_ format: NoteFormat) -> String {
+        switch format {
+        case .soap:
+            return "Subjective, Objective, Assessment, Plan"
+        case .dap:
+            return "Data, Assessment, Plan"
+        case .goalFocused:
+            return "Session observations and per-goal breakdown"
         }
     }
 

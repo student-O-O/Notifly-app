@@ -8,11 +8,12 @@ struct ReviewNoteView: View {
     var tone: NoteTone = .standard
     let sessionID: UUID
     let transcript: String
-    var onComplete: () -> Void
+    @Binding var dismissSheet: Bool
 
     @Environment(\.modelContext) private var modelContext
     @State private var isGenerating = true
     @State private var generationError: String?
+    @State private var insufficientContentReason: String?
 
     @State private var subjective = ""
     @State private var objective = ""
@@ -32,6 +33,7 @@ struct ReviewNoteView: View {
     @State private var showRegenerateSheet = false
     @State private var navigateToRegenerated = false
     @State private var regenerateTone: NoteTone = .standard
+    @State private var regenerateFormat: NoteFormat = .soap
 
     var body: some View {
         Group {
@@ -39,14 +41,20 @@ struct ReviewNoteView: View {
                 generatingView
             } else if let error = generationError {
                 errorView(error)
+            } else if let reason = insufficientContentReason {
+                insufficientView(reason)
             } else {
                 noteForm
+            }
+        }
+        .overlay {
+            if isGenerating {
+                intelligenceHalo
             }
         }
         .navigationTitle("Review Note")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(saved)
         #endif
         .task {
             if selectedTone == nil {
@@ -60,22 +68,80 @@ struct ReviewNoteView: View {
         .navigationDestination(isPresented: $navigateToRegenerated) {
             ReviewNoteView(
                 clientInitials: clientInitials,
-                noteFormat: noteFormat,
+                noteFormat: regenerateFormat,
                 tone: regenerateTone,
                 sessionID: sessionID,
                 transcript: transcript,
-                onComplete: onComplete
+                dismissSheet: $dismissSheet
             )
         }
     }
 
+    private static let intelligenceColors: [Color] = [
+        Color(red: 0.42, green: 0.20, blue: 0.95),  // deep purple
+        Color(red: 0.85, green: 0.25, blue: 0.80),  // magenta
+        Color(red: 1.00, green: 0.40, blue: 0.30),  // coral
+        Color(red: 1.00, green: 0.72, blue: 0.20),  // amber
+        Color(red: 0.30, green: 0.85, blue: 0.80),  // cyan
+        Color(red: 0.35, green: 0.50, blue: 1.00),  // azure
+        Color(red: 0.42, green: 0.20, blue: 0.95)   // close the loop
+    ]
+
     private var generatingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Generating your \(noteFormat.rawValue) note...")
+        VStack(spacing: 20) {
+            TimelineView(.animation) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                let rotation = Angle.degrees(t * 48)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(
+                        AngularGradient(
+                            colors: Self.intelligenceColors,
+                            center: .center,
+                            startAngle: rotation,
+                            endAngle: rotation + .degrees(360)
+                        )
+                    )
+                    .symbolEffect(.variableColor.iterative.reversing)
+            }
+            .frame(width: 70, height: 70)
+
+            Text("Generating your \(noteFormat.rawValue) note")
+                .font(.headline)
+            Text("Apple Intelligence is summarising the transcript")
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var intelligenceHalo: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            let rotation = Angle.degrees(t * 36)
+            let gradient = AngularGradient(
+                colors: Self.intelligenceColors,
+                center: .center,
+                startAngle: rotation,
+                endAngle: rotation + .degrees(360)
+            )
+
+            ZStack {
+                // Outer soft glow — wide blurred stroke creating the halo bloom
+                Rectangle()
+                    .stroke(gradient, lineWidth: 28)
+                    .blur(radius: 22)
+                    .opacity(0.75)
+
+                // Inner crisp gradient border
+                Rectangle()
+                    .strokeBorder(gradient, lineWidth: 3)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private func errorView(_ error: String) -> some View {
@@ -89,6 +155,28 @@ struct ReviewNoteView: View {
                 isGenerating = true
                 Task { await generateNote() }
             }
+        }
+    }
+
+    private func insufficientView(_ reason: String) -> some View {
+        ContentUnavailableView {
+            Label("Not Enough Information", systemImage: "doc.text.magnifyingglass")
+        } description: {
+            VStack(spacing: 12) {
+                Text(reason.isEmpty
+                    ? "The recording doesn't contain enough clinical content to generate a note."
+                    : reason)
+                DisclosureGroup("View Transcript") {
+                    Text(transcript)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+                .padding(.horizontal)
+            }
+        } actions: {
+            Button("Done") { dismissSheet = false }
+                .buttonStyle(.borderedProminent)
         }
     }
 
@@ -132,9 +220,18 @@ struct ReviewNoteView: View {
                 Section {
                     Button {
                         regenerateTone = selectedTone ?? tone
+                        regenerateFormat = noteFormat
                         showRegenerateSheet = true
                     } label: {
                         Label("Generate Another Note", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+
+                    Button {
+                        dismissSheet = false
+                    } label: {
+                        Label("Done", systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
                             .font(.headline)
                     }
@@ -146,17 +243,30 @@ struct ReviewNoteView: View {
     private var regenerateSheet: some View {
         NavigationStack {
             Form {
-                Section("Select Tone") {
+                Section {
+                    Picker("Format", selection: $regenerateFormat) {
+                        ForEach(NoteFormat.allCases) { format in
+                            Text(format.rawValue).tag(format)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Format")
+                } footer: {
+                    Text(formatDescription(regenerateFormat))
+                }
+
+                Section {
                     Picker("Tone", selection: $regenerateTone) {
                         ForEach(NoteTone.allCases) { t in
                             Text(t.rawValue).tag(t)
                         }
                     }
-                    .pickerStyle(.inline)
-
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Tone")
+                } footer: {
                     Text(regenerateTone.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -179,6 +289,17 @@ struct ReviewNoteView: View {
                     Button("Cancel") { showRegenerateSheet = false }
                 }
             }
+        }
+    }
+
+    private func formatDescription(_ format: NoteFormat) -> String {
+        switch format {
+        case .soap:
+            return "Subjective, Objective, Assessment, Plan"
+        case .dap:
+            return "Data, Assessment, Plan"
+        case .goalFocused:
+            return "Session observations and per-goal breakdown"
         }
     }
 
@@ -313,6 +434,11 @@ struct ReviewNoteView: View {
             switch noteFormat {
             case .soap:
                 let note = try await NoteGenerationService.generateSOAP(transcript: transcript, tone: currentTone)
+                guard note.hasSufficientContent else {
+                    insufficientContentReason = note.insufficientContentReason
+                    isGenerating = false
+                    return
+                }
                 subjective = note.subjective
                 objective = note.objective
                 assessment = note.assessment
@@ -322,6 +448,11 @@ struct ReviewNoteView: View {
                 interventionsUsed = note.interventionsUsed
             case .dap:
                 let note = try await NoteGenerationService.generateDAP(transcript: transcript, tone: currentTone)
+                guard note.hasSufficientContent else {
+                    insufficientContentReason = note.insufficientContentReason
+                    isGenerating = false
+                    return
+                }
                 data = note.data
                 assessment = note.assessment
                 plan = note.plan
@@ -330,6 +461,11 @@ struct ReviewNoteView: View {
                 interventionsUsed = note.interventionsUsed
             case .goalFocused:
                 let note = try await NoteGenerationService.generateGoalFocused(transcript: transcript, tone: currentTone)
+                guard note.hasSufficientContent else {
+                    insufficientContentReason = note.insufficientContentReason
+                    isGenerating = false
+                    return
+                }
                 sessionObservations = note.sessionObservations
                 goalCards = note.goals.map {
                     GoalCard(goal: $0.goal, activities: $0.activities, observations: $0.observations, nextSteps: $0.nextSteps)

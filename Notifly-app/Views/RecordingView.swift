@@ -5,7 +5,7 @@ struct RecordingView: View {
     let clientInitials: String
     let noteFormat: NoteFormat
     var tone: NoteTone = .standard
-    var onComplete: () -> Void
+    @Binding var dismissSheet: Bool
 
     let sessionID = UUID()
     @State private var speechRecognizer = SpeechRecognizer()
@@ -42,7 +42,7 @@ struct RecordingView: View {
                 tone: tone,
                 sessionID: sessionID,
                 transcript: speechRecognizer.transcript,
-                onComplete: onComplete
+                dismissSheet: $dismissSheet
             )
         }
     }

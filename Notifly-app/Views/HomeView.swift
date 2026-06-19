@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var expandedSessions: Set<UUID> = []
     @State private var noteToDelete: SessionNote?
     @State private var sessionToDelete: UUID?
+    @State private var navigationPath: [SessionNote] = []
 
     private var groupedSessions: [(id: UUID, date: Date, clientInitials: String, notes: [SessionNote])] {
         let grouped = Dictionary(grouping: notes, by: \.sessionID)
@@ -17,13 +18,16 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             Group {
                 if notes.isEmpty {
                     emptyState
                 } else {
                     sessionList
                 }
+            }
+            .navigationDestination(for: SessionNote.self) { note in
+                NoteDetailView(note: note, popToRoot: { navigationPath.removeAll() })
             }
             .navigationTitle("NOTIFLY")
             .toolbar {
@@ -37,7 +41,7 @@ struct HomeView: View {
                 }
             }
             .sheet(isPresented: $showNewSession) {
-                NewSessionView()
+                NewSessionView(isPresented: $showNewSession)
             }
             .alert("Delete Note?", isPresented: Binding(
                 get: { noteToDelete != nil },
@@ -90,7 +94,7 @@ struct HomeView: View {
             ForEach(groupedSessions, id: \.id) { session in
                 if session.notes.count == 1 {
                     let note = session.notes[0]
-                    NavigationLink(destination: NoteDetailView(note: note)) {
+                    NavigationLink(value: note) {
                         NoteRow(note: note)
                     }
                     .swipeActions(edge: .trailing) {
@@ -112,7 +116,7 @@ struct HomeView: View {
                         }
                     )) {
                         ForEach(session.notes) { note in
-                            NavigationLink(destination: NoteDetailView(note: note)) {
+                            NavigationLink(value: note) {
                                 SessionChildRow(note: note)
                             }
                             .swipeActions(edge: .trailing) {
