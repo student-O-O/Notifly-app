@@ -5,6 +5,7 @@ import SwiftData
 struct Notifly_appApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
+            Client.self,
             SessionNote.self,
         ])
         let storeURL = URL.applicationSupportDirectory.appending(path: "Notifly.store")

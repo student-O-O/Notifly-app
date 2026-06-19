@@ -24,6 +24,7 @@ final class SessionNote {
     var id: UUID
     var sessionID: UUID
     var clientInitials: String
+    var client: Client?
     var noteFormatRaw: String
     var toneRaw: String
     var date: Date
@@ -63,6 +64,7 @@ final class SessionNote {
 
     init(
         clientInitials: String,
+        client: Client? = nil,
         noteFormat: NoteFormat,
         tone: NoteTone = .standard,
         sessionID: UUID = UUID(),
@@ -81,6 +83,7 @@ final class SessionNote {
         self.id = UUID()
         self.sessionID = sessionID
         self.clientInitials = clientInitials
+        self.client = client
         self.noteFormatRaw = noteFormat.rawValue
         self.toneRaw = tone.rawValue
         self.date = Date()
