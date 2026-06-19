@@ -31,6 +31,13 @@ struct HomeView: View {
             }
             .navigationTitle("NOTIFLY")
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        ClientListView()
+                    } label: {
+                        Label("Clients", systemImage: "person.2")
+                    }
+                }
                 ToolbarItem(placement: .bottomBar) {
                     Button {
                         showNewSession = true
