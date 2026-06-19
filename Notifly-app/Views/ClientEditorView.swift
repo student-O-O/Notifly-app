@@ -16,23 +16,29 @@ struct ClientEditorView: View {
         let id = UUID()
         let existingGoal: Goal?
         var title: String
+        var details: String
         var status: GoalStatus
         let originalTitle: String
+        let originalDetails: String
         let originalStatus: GoalStatus
 
         init(existing goal: Goal) {
             self.existingGoal = goal
             self.title = goal.title
+            self.details = goal.details
             self.status = goal.currentStatus
             self.originalTitle = goal.title
+            self.originalDetails = goal.details
             self.originalStatus = goal.currentStatus
         }
 
         init(draft: Void = ()) {
             self.existingGoal = nil
             self.title = ""
+            self.details = ""
             self.status = .notStarted
             self.originalTitle = ""
+            self.originalDetails = ""
             self.originalStatus = .notStarted
         }
     }
@@ -105,6 +111,10 @@ struct ClientEditorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("Goal title", text: $edit.title, axis: .vertical)
                         .lineLimit(1...3)
+                    TextField("Details (optional)", text: $edit.details, axis: .vertical)
+                        .lineLimit(1...4)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Picker("Status", selection: $edit.status) {
                         ForEach(GoalStatus.allCases) { status in
                             Label(status.rawValue, systemImage: status.systemImage).tag(status)
@@ -158,11 +168,15 @@ struct ClientEditorView: View {
 
         for edit in goalEdits {
             let trimmedTitle = edit.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedDetails = edit.details.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if let goal = edit.existingGoal {
                 guard !trimmedTitle.isEmpty else { continue }
                 if trimmedTitle != edit.originalTitle {
                     goal.title = trimmedTitle
+                }
+                if trimmedDetails != edit.originalDetails {
+                    goal.details = trimmedDetails
                 }
                 if edit.status != edit.originalStatus {
                     let entry = GoalStatusEntry(
@@ -177,7 +191,7 @@ struct ClientEditorView: View {
                 }
             } else {
                 guard !trimmedTitle.isEmpty else { continue }
-                let goal = Goal(title: trimmedTitle, status: edit.status)
+                let goal = Goal(title: trimmedTitle, details: trimmedDetails, status: edit.status)
                 modelContext.insert(goal)
                 goal.client = effectiveClient
                 let entry = GoalStatusEntry(

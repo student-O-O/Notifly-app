@@ -84,19 +84,6 @@ struct ClientListView: View {
         )
     }
 
-    private func expandedBinding(for client: Client) -> Binding<Bool> {
-        Binding(
-            get: { expandedClients.contains(client.id) },
-            set: { isExpanded in
-                if isExpanded {
-                    expandedClients.insert(client.id)
-                } else {
-                    expandedClients.remove(client.id)
-                }
-            }
-        )
-    }
-
     private var emptyState: some View {
         ContentUnavailableView {
             Label("No Clients Yet", systemImage: "person.crop.circle")
@@ -115,23 +102,49 @@ struct ClientListView: View {
     private var clientList: some View {
         List {
             ForEach(filteredClients) { client in
-                DisclosureGroup(isExpanded: expandedBinding(for: client)) {
-                    clientGoalContent(for: client)
-                } label: {
-                    ClientRow(client: client)
+                Section {
+                    clientHeaderRow(for: client)
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                clientToDelete = client
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            Button {
+                                clientToEdit = client
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
+                            }
+                            .tint(.blue)
+                        }
+
+                    if expandedClients.contains(client.id) {
+                        clientGoalContent(for: client)
+                    }
                 }
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        clientToDelete = client
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                    Button {
-                        clientToEdit = client
-                    } label: {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                    .tint(.blue)
+            }
+        }
+        #if os(iOS)
+        .listSectionSpacing(.compact)
+        #endif
+    }
+
+    private func clientHeaderRow(for client: Client) -> some View {
+        HStack {
+            ClientRow(client: client)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(expandedClients.contains(client.id) ? 90 : 0))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if expandedClients.contains(client.id) {
+                    expandedClients.remove(client.id)
+                } else {
+                    expandedClients.insert(client.id)
                 }
             }
         }

@@ -2,13 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct GoalDetailView: View {
-    @Bindable var goal: Goal
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var showStatusSheet = false
-    @State private var showEditSheet = false
-    @State private var showDeleteAlert = false
+    let goal: Goal
 
     var body: some View {
         Form {
@@ -20,11 +14,6 @@ struct GoalDetailView: View {
                 if let achieved = goal.achievedDate {
                     LabeledContent("Achieved", value: achieved.formatted(date: .long, time: .omitted))
                 }
-                Button {
-                    showStatusSheet = true
-                } label: {
-                    Label("Change Status", systemImage: "arrow.triangle.2.circlepath")
-                }
             }
 
             if !goal.details.isEmpty {
@@ -34,49 +23,11 @@ struct GoalDetailView: View {
             }
 
             historySection
-
-            Section {
-                Button {
-                    goal.archived.toggle()
-                    try? modelContext.save()
-                } label: {
-                    Label(
-                        goal.archived ? "Unarchive" : "Archive",
-                        systemImage: goal.archived ? "tray.and.arrow.up" : "archivebox"
-                    )
-                }
-                Button(role: .destructive) {
-                    showDeleteAlert = true
-                } label: {
-                    Label("Delete Goal", systemImage: "trash")
-                }
-            }
         }
         .navigationTitle(goal.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Edit") { showEditSheet = true }
-            }
-        }
-        .sheet(isPresented: $showStatusSheet) {
-            GoalStatusChangeSheet(isPresented: $showStatusSheet, goal: goal)
-        }
-        .sheet(isPresented: $showEditSheet) {
-            GoalEditorView(isPresented: $showEditSheet, editing: goal)
-        }
-        .alert("Delete Goal?", isPresented: $showDeleteAlert) {
-            Button("Delete", role: .destructive) {
-                modelContext.delete(goal)
-                try? modelContext.save()
-                dismiss()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This goal and its full status history will be permanently deleted.")
-        }
     }
 
     private var statusRow: some View {
