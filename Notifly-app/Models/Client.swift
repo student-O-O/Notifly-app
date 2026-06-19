@@ -11,6 +11,9 @@ final class Client {
     @Relationship(deleteRule: .nullify, inverse: \SessionNote.client)
     var sessionNotes: [SessionNote] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \Goal.client)
+    var goals: [Goal] = []
+
     init(firstName: String, lastName: String, createdAt: Date = Date()) {
         self.id = UUID()
         self.firstName = firstName
@@ -34,5 +37,13 @@ final class Client {
 
     var lastSessionDate: Date? {
         sessionNotes.map(\.date).max()
+    }
+
+    var activeGoals: [Goal] {
+        goals.filter { !$0.archived }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    var archivedGoals: [Goal] {
+        goals.filter { $0.archived }.sorted { $0.createdAt > $1.createdAt }
     }
 }

@@ -7,6 +7,8 @@ struct ClientListView: View {
     @State private var showNewClientSheet = false
     @State private var clientToEdit: Client?
     @State private var clientToDelete: Client?
+    @State private var newGoalClient: Client?
+    @State private var expandedClients: Set<UUID> = []
     @State private var searchText = ""
 
     private var filteredClients: [Client] {
@@ -41,14 +43,14 @@ struct ClientListView: View {
                 }
             }
         }
-        .navigationDestination(for: Client.self) { client in
-            ClientDetailPlaceholder(client: client)
-        }
         .sheet(isPresented: $showNewClientSheet) {
             ClientEditorView(isPresented: $showNewClientSheet)
         }
         .sheet(item: $clientToEdit) { client in
             ClientEditorView(isPresented: editorPresentedBinding, editing: client)
+        }
+        .sheet(item: $newGoalClient) { client in
+            GoalEditorView(isPresented: newGoalPresentedBinding, client: client)
         }
         .alert("Delete Client?", isPresented: Binding(
             get: { clientToDelete != nil },
@@ -75,6 +77,26 @@ struct ClientListView: View {
         )
     }
 
+    private var newGoalPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { newGoalClient != nil },
+            set: { if !$0 { newGoalClient = nil } }
+        )
+    }
+
+    private func expandedBinding(for client: Client) -> Binding<Bool> {
+        Binding(
+            get: { expandedClients.contains(client.id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedClients.insert(client.id)
+                } else {
+                    expandedClients.remove(client.id)
+                }
+            }
+        )
+    }
+
     private var emptyState: some View {
         ContentUnavailableView {
             Label("No Clients Yet", systemImage: "person.crop.circle")
@@ -93,7 +115,9 @@ struct ClientListView: View {
     private var clientList: some View {
         List {
             ForEach(filteredClients) { client in
-                NavigationLink(value: client) {
+                DisclosureGroup(isExpanded: expandedBinding(for: client)) {
+                    clientGoalContent(for: client)
+                } label: {
                     ClientRow(client: client)
                 }
                 .swipeActions(edge: .trailing) {
@@ -112,6 +136,95 @@ struct ClientListView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func clientGoalContent(for client: Client) -> some View {
+        if client.activeGoals.isEmpty {
+            Text("No goals yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 2)
+        } else {
+            ForEach(client.activeGoals) { goal in
+                goalRow(goal)
+            }
+        }
+
+        if !client.archivedGoals.isEmpty {
+            DisclosureGroup {
+                ForEach(client.archivedGoals) { goal in
+                    goalRow(goal)
+                }
+            } label: {
+                Text("Archived (\(client.archivedGoals.count))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        Button {
+            newGoalClient = client
+        } label: {
+            Label("Add Goal", systemImage: "plus.circle")
+                .font(.subheadline)
+        }
+    }
+
+    private func goalRow(_ goal: Goal) -> some View {
+        NavigationLink(destination: GoalDetailView(goal: goal)) {
+            InlineGoalRow(goal: goal)
+        }
+    }
+}
+
+struct InlineGoalRow: View {
+    let goal: Goal
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: goal.currentStatus.systemImage)
+                .foregroundStyle(tintFor(goal.currentStatus))
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(goal.title)
+                    .font(.subheadline)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var subtitle: String {
+        goalStatusSubtitle(for: goal)
+    }
+
+    private func tintFor(_ status: GoalStatus) -> Color {
+        switch status {
+        case .notStarted: return .secondary
+        case .inProgress: return .blue
+        case .achieved: return .green
+        }
+    }
+}
+
+func goalStatusSubtitle(for goal: Goal) -> String {
+    var parts: [String] = [goal.currentStatus.rawValue]
+    switch goal.currentStatus {
+    case .inProgress:
+        if let date = goal.startedDate {
+            parts.append("since \(date.formatted(date: .abbreviated, time: .omitted))")
+        }
+    case .achieved:
+        if let date = goal.achievedDate {
+            parts.append(date.formatted(date: .abbreviated, time: .omitted))
+        }
+    case .notStarted:
+        break
+    }
+    return parts.joined(separator: " · ")
 }
 
 struct ClientRow: View {
@@ -148,22 +261,6 @@ struct ClientRow: View {
             return "\(count) session\(count == 1 ? "" : "s") · Last \(last.formatted(date: .abbreviated, time: .omitted))"
         }
         return "\(count) session\(count == 1 ? "" : "s")"
-    }
-}
-
-private struct ClientDetailPlaceholder: View {
-    let client: Client
-
-    var body: some View {
-        ContentUnavailableView {
-            Label(client.displayName, systemImage: "person.crop.circle")
-        } description: {
-            Text("Client detail screen is coming soon. Goals and sessions will live here.")
-        }
-        .navigationTitle(client.displayName)
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
     }
 }
 

@@ -8,7 +8,7 @@ struct HomeView: View {
     @State private var expandedSessions: Set<UUID> = []
     @State private var noteToDelete: SessionNote?
     @State private var sessionToDelete: UUID?
-    @State private var navigationPath: [SessionNote] = []
+    @State private var navigationPath = NavigationPath()
 
     private var groupedSessions: [(id: UUID, date: Date, clientInitials: String, notes: [SessionNote])] {
         let grouped = Dictionary(grouping: notes, by: \.sessionID)
@@ -27,7 +27,7 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(for: SessionNote.self) { note in
-                NoteDetailView(note: note, popToRoot: { navigationPath.removeAll() })
+                NoteDetailView(note: note, popToRoot: { navigationPath = NavigationPath() })
             }
             .navigationTitle("NOTIFLY")
             .toolbar {
