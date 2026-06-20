@@ -10,10 +10,10 @@ struct HomeView: View {
     @State private var sessionToDelete: UUID?
     @State private var navigationPath = NavigationPath()
 
-    private var groupedSessions: [(id: UUID, date: Date, clientInitials: String, notes: [SessionNote])] {
+    private var groupedSessions: [(id: UUID, date: Date, clientName: String, notes: [SessionNote])] {
         let grouped = Dictionary(grouping: notes, by: \.sessionID)
         return grouped.map { (id: $0.key, notes: $0.value) }
-            .map { (id: $0.id, date: $0.notes.map(\.date).max() ?? Date(), clientInitials: $0.notes.first?.clientInitials ?? "", notes: $0.notes.sorted { $0.date > $1.date }) }
+            .map { (id: $0.id, date: $0.notes.map(\.date).max() ?? Date(), clientName: $0.notes.first?.clientName ?? "", notes: $0.notes.sorted { $0.date > $1.date }) }
             .sorted { $0.date > $1.date }
     }
 
@@ -151,12 +151,12 @@ struct HomeView: View {
 }
 
 struct SessionGroupRow: View {
-    let session: (id: UUID, date: Date, clientInitials: String, notes: [SessionNote])
+    let session: (id: UUID, date: Date, clientName: String, notes: [SessionNote])
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(session.clientInitials)
+                Text(session.clientName)
                     .font(.headline)
                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.subheadline)
@@ -205,7 +205,7 @@ struct NoteRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(note.clientInitials)
+                Text(note.clientName)
                     .font(.headline)
                 HStack(spacing: 4) {
                     Text(note.date.formatted(date: .abbreviated, time: .shortened))

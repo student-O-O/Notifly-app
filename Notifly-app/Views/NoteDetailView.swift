@@ -64,7 +64,8 @@ struct NoteDetailView: View {
         }
         .navigationDestination(isPresented: $navigateToRegenerated) {
             ReviewNoteView(
-                clientInitials: note.clientInitials,
+                clientName: note.clientName,
+                client: note.client,
                 noteFormat: regenerateFormat,
                 tone: regenerateTone,
                 sessionID: note.sessionID,
@@ -84,7 +85,7 @@ struct NoteDetailView: View {
 
     private var headerSection: some View {
         Section {
-            LabeledContent("Client", value: note.clientInitials)
+            LabeledContent("Client", value: note.clientName)
             if isEditing {
                 DatePicker("Date", selection: $note.date)
             } else {

@@ -23,7 +23,7 @@ struct GoalCard: Codable, Sendable, Identifiable {
 final class SessionNote {
     var id: UUID
     var sessionID: UUID
-    var clientInitials: String
+    var clientName: String
     var client: Client?
     var noteFormatRaw: String
     var toneRaw: String
@@ -63,7 +63,7 @@ final class SessionNote {
     }
 
     init(
-        clientInitials: String,
+        clientName: String,
         client: Client? = nil,
         noteFormat: NoteFormat,
         tone: NoteTone = .standard,
@@ -82,7 +82,7 @@ final class SessionNote {
     ) {
         self.id = UUID()
         self.sessionID = sessionID
-        self.clientInitials = clientInitials
+        self.clientName = clientName
         self.client = client
         self.noteFormatRaw = noteFormat.rawValue
         self.toneRaw = tone.rawValue
@@ -138,7 +138,7 @@ final class SessionNote {
 
     func asPlainText() -> String {
         var text = "\(displayName) Note\n"
-        text += "Client: \(clientInitials)\n"
+        text += "Client: \(clientName)\n"
         text += "Date: \(date.formatted(date: .long, time: .shortened))\n"
         text += String(repeating: "-", count: 40) + "\n\n"
 

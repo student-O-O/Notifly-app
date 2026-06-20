@@ -7,6 +7,7 @@ struct ClientEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     let editingClient: Client?
+    let onSave: ((Client) -> Void)?
     @State private var firstName: String
     @State private var lastName: String
     @State private var goalEdits: [GoalEdit]
@@ -43,9 +44,14 @@ struct ClientEditorView: View {
         }
     }
 
-    init(isPresented: Binding<Bool>, editing client: Client? = nil) {
+    init(
+        isPresented: Binding<Bool>,
+        editing client: Client? = nil,
+        onSave: ((Client) -> Void)? = nil
+    ) {
         self._isPresented = isPresented
         self.editingClient = client
+        self.onSave = onSave
         _firstName = State(initialValue: client?.firstName ?? "")
         _lastName = State(initialValue: client?.lastName ?? "")
         if let client {
@@ -210,6 +216,7 @@ struct ClientEditorView: View {
         }
 
         try? modelContext.save()
+        onSave?(effectiveClient)
         isPresented = false
     }
 }
