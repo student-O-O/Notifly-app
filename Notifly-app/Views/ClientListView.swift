@@ -3,7 +3,8 @@ import SwiftData
 
 struct ClientListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Client.createdAt, order: .reverse) private var clients: [Client]
+    @Query(sort: [SortDescriptor(\Client.lastName), SortDescriptor(\Client.firstName)])
+    private var clients: [Client]
     @State private var showNewClientSheet = false
     @State private var clientToEdit: Client?
     @State private var clientToDelete: Client?
@@ -19,6 +20,20 @@ struct ClientListView: View {
                 || $0.firstName.localizedCaseInsensitiveContains(trimmed)
                 || $0.lastName.localizedCaseInsensitiveContains(trimmed)
         }
+    }
+
+    private var groupedClients: [(letter: String, clients: [Client])] {
+        let grouped = Dictionary(grouping: filteredClients) { client -> String in
+            guard let first = client.lastName.trimmingCharacters(in: .whitespaces).first else { return "#" }
+            let upper = String(first).uppercased()
+            return upper.range(of: "^[A-Z]$", options: .regularExpression) != nil ? upper : "#"
+        }
+        return grouped.map { (letter: $0.key, clients: $0.value) }
+            .sorted { a, b in
+                if a.letter == "#" { return false }
+                if b.letter == "#" { return true }
+                return a.letter < b.letter
+            }
     }
 
     var body: some View {
@@ -100,33 +115,69 @@ struct ClientListView: View {
     }
 
     private var clientList: some View {
-        List {
-            ForEach(filteredClients) { client in
-                Section {
-                    clientHeaderRow(for: client)
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                clientToDelete = client
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            Button {
-                                clientToEdit = client
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
-                            }
-                            .tint(.blue)
-                        }
+        ScrollViewReader { proxy in
+            ZStack(alignment: .trailing) {
+                List {
+                    ForEach(groupedClients, id: \.letter) { group in
+                        Section {
+                            ForEach(group.clients) { client in
+                                clientHeaderRow(for: client)
+                                    .swipeActions(edge: .trailing) {
+                                        Button(role: .destructive) {
+                                            clientToDelete = client
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                        Button {
+                                            clientToEdit = client
+                                        } label: {
+                                            Label("Edit", systemImage: "pencil")
+                                        }
+                                        .tint(.blue)
+                                    }
 
-                    if expandedClients.contains(client.id) {
-                        clientGoalContent(for: client)
+                                if expandedClients.contains(client.id) {
+                                    clientGoalContent(for: client)
+                                }
+                            }
+                        } header: {
+                            Text(group.letter)
+                                .id(group.letter)
+                        }
                     }
+                }
+                #if os(iOS)
+                .listSectionSpacing(.compact)
+                #endif
+
+                if groupedClients.count > 1 {
+                    alphabetIndex(proxy: proxy)
                 }
             }
         }
-        #if os(iOS)
-        .listSectionSpacing(.compact)
-        #endif
+    }
+
+    private func alphabetIndex(proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 2) {
+            ForEach(groupedClients.map(\.letter), id: \.self) { letter in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(letter, anchor: .top)
+                    }
+                } label: {
+                    Text(letter)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tint)
+                        .frame(width: 16, height: 14)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.trailing, 2)
+        .background(Color.clear)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Alphabet index")
     }
 
     private func clientHeaderRow(for client: Client) -> some View {
