@@ -2,7 +2,7 @@ import SwiftUI
 import FoundationModels
 
 struct RecordingView: View {
-    let clientInitials: String
+    let client: Client
     let noteFormat: NoteFormat
     var tone: NoteTone = .standard
     @Binding var dismissSheet: Bool
@@ -37,7 +37,8 @@ struct RecordingView: View {
         }
         .navigationDestination(isPresented: $showReview) {
             ReviewNoteView(
-                clientInitials: clientInitials,
+                clientName: client.displayName,
+                client: client,
                 noteFormat: noteFormat,
                 tone: tone,
                 sessionID: sessionID,

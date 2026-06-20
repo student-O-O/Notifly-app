@@ -4,13 +4,16 @@ import SwiftData
 struct NewSessionView: View {
     @Binding var isPresented: Bool
     @Environment(\.dismiss) private var dismiss
+    @Query private var clients: [Client]
 
     @AppStorage("defaultNoteFormat") private var defaultFormatRaw: String = NoteFormat.soap.rawValue
 
-    @State private var clientInitials = ""
+    @State private var selectedClient: Client?
+    @State private var clientSearchText = ""
     @State private var noteFormat: NoteFormat
     @State private var selectedTone: NoteTone = .standard
     @State private var navigateToRecording = false
+    @State private var showNewClientSheet = false
 
     init(isPresented: Binding<Bool>) {
         self._isPresented = isPresented
@@ -26,11 +29,7 @@ struct NewSessionView: View {
         NavigationStack {
             Form {
                 Section("Client") {
-                    TextField("Client Initials (e.g. JD)", text: $clientInitials)
-                        #if os(iOS)
-                        .textInputAutocapitalization(.characters)
-                        #endif
-                        .autocorrectionDisabled()
+                    clientSection
                 }
 
                 Section {
@@ -81,6 +80,10 @@ struct NewSessionView: View {
                             .font(.headline)
                     }
                     .disabled(!canStart)
+                } footer: {
+                    if !canStart {
+                        Text("Choose a client to begin.")
+                    }
                 }
             }
             .navigationTitle("New Session")
@@ -93,18 +96,129 @@ struct NewSessionView: View {
                 }
             }
             .navigationDestination(isPresented: $navigateToRecording) {
-                RecordingView(
-                    clientInitials: clientInitials.trimmingCharacters(in: .whitespaces),
-                    noteFormat: noteFormat,
-                    tone: selectedTone,
-                    dismissSheet: $isPresented
+                if let client = selectedClient {
+                    RecordingView(
+                        client: client,
+                        noteFormat: noteFormat,
+                        tone: selectedTone,
+                        dismissSheet: $isPresented
+                    )
+                }
+            }
+            .sheet(isPresented: $showNewClientSheet) {
+                ClientEditorView(
+                    isPresented: $showNewClientSheet,
+                    onSave: { newClient in
+                        selectedClient = newClient
+                        clientSearchText = ""
+                    }
                 )
             }
         }
     }
 
+    private var filteredClients: [Client] {
+        let trimmed = clientSearchText.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return [] }
+        let options: String.CompareOptions = [.caseInsensitive, .anchored, .diacriticInsensitive]
+        return clients.filter {
+            $0.firstName.range(of: trimmed, options: options) != nil
+                || $0.lastName.range(of: trimmed, options: options) != nil
+        }
+    }
+
+    @ViewBuilder
+    private var clientSection: some View {
+        if clients.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("No clients yet.")
+                    .foregroundStyle(.secondary)
+                Button {
+                    showNewClientSheet = true
+                } label: {
+                    Label("Create your first client profile", systemImage: "plus.circle.fill")
+                }
+            }
+            .padding(.vertical, 4)
+        } else if let client = selectedClient {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(.tint.opacity(0.15)).frame(width: 32, height: 32)
+                    Text(client.initials)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+                Text(client.displayName)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Button {
+                    selectedClient = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Change client")
+            }
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search clients", text: $clientSearchText)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.words)
+                    #endif
+                    .autocorrectionDisabled()
+                if !clientSearchText.isEmpty {
+                    Button {
+                        clientSearchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            ForEach(filteredClients.prefix(8)) { client in
+                clientSearchResultRow(client)
+            }
+
+            if !clientSearchText.trimmingCharacters(in: .whitespaces).isEmpty && filteredClients.isEmpty {
+                Text("No matching clients.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                showNewClientSheet = true
+            } label: {
+                Label("New Client", systemImage: "plus.circle")
+            }
+        }
+    }
+
+    private func clientSearchResultRow(_ client: Client) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(.tint.opacity(0.15)).frame(width: 32, height: 32)
+                Text(client.initials)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+            Text(client.displayName)
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectedClient = client
+            clientSearchText = ""
+        }
+    }
+
     private var canStart: Bool {
-        !clientInitials.trimmingCharacters(in: .whitespaces).isEmpty
+        selectedClient != nil
     }
 
     private var formatDescription: String {

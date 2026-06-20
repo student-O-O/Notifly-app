@@ -3,7 +3,8 @@ import SwiftData
 import FoundationModels
 
 struct ReviewNoteView: View {
-    let clientInitials: String
+    let clientName: String
+    var client: Client?
     let noteFormat: NoteFormat
     var tone: NoteTone = .standard
     let sessionID: UUID
@@ -67,7 +68,8 @@ struct ReviewNoteView: View {
         }
         .navigationDestination(isPresented: $navigateToRegenerated) {
             ReviewNoteView(
-                clientInitials: clientInitials,
+                clientName: clientName,
+                client: client,
                 noteFormat: regenerateFormat,
                 tone: regenerateTone,
                 sessionID: sessionID,
@@ -481,7 +483,8 @@ struct ReviewNoteView: View {
     private func saveNote() {
         let currentTone = selectedTone ?? tone
         let note = SessionNote(
-            clientInitials: clientInitials,
+            clientName: clientName,
+            client: client,
             noteFormat: noteFormat,
             tone: currentTone,
             sessionID: sessionID,
