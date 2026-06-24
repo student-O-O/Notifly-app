@@ -46,4 +46,8 @@ final class Client {
     var archivedGoals: [Goal] {
         goals.filter { $0.archived }.sorted { $0.createdAt > $1.createdAt }
     }
+
+    var notesNewestFirst: [SessionNote] {
+        sessionNotes.sorted { $0.date > $1.date }
+    }
 }

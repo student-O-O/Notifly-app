@@ -9,12 +9,17 @@ struct ClientDetailView: View {
     @State private var showNewGoal = false
     @State private var showArchived = false
     @State private var goalToDelete: Goal?
+    @State private var noteToDelete: SessionNote?
+
+    private let recentNotesLimit = 5
 
     var body: some View {
         List {
             Section { clientHeader }
+
             goalSection
             archivedGoalSection
+            notesSection
         }
         .navigationTitle(client.displayName)
         #if os(iOS)
@@ -24,9 +29,6 @@ struct ClientDetailView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Edit") { showEditClient = true }
             }
-        }
-        .navigationDestination(for: Goal.self) { goal in
-            GoalDetailView(goal: goal)
         }
         .sheet(isPresented: $showEditClient) {
             ClientEditorView(isPresented: $showEditClient, editing: client)
@@ -47,6 +49,20 @@ struct ClientDetailView: View {
             Button("Cancel", role: .cancel) { goalToDelete = nil }
         } message: {
             Text("This goal and its full status history will be permanently deleted.")
+        }
+        .alert("Delete Note?", isPresented: Binding(
+            get: { noteToDelete != nil },
+            set: { if !$0 { noteToDelete = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let n = noteToDelete {
+                    withAnimation { modelContext.delete(n) }
+                }
+                noteToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { noteToDelete = nil }
+        } message: {
+            Text("This note will be permanently deleted.")
         }
     }
 
@@ -79,7 +95,9 @@ struct ClientDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(client.activeGoals) { goal in
-                    NavigationLink(value: goal) {
+                    NavigationLink {
+                        GoalDetailView(goal: goal)
+                    } label: {
                         GoalRow(goal: goal)
                     }
                     .swipeActions(edge: .trailing) {
@@ -97,7 +115,17 @@ struct ClientDetailView: View {
                 Label("Add Goal", systemImage: "plus.circle")
             }
         } header: {
-            Text("Goals")
+            sectionHeader("Goals", count: client.activeGoals.count)
+        }
+    }
+
+    private func sectionHeader(_ title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            if count > 0 {
+                Text("· \(count)")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -107,7 +135,9 @@ struct ClientDetailView: View {
             Section {
                 DisclosureGroup(isExpanded: $showArchived) {
                     ForEach(client.archivedGoals) { goal in
-                        NavigationLink(value: goal) {
+                        NavigationLink {
+                            GoalDetailView(goal: goal)
+                        } label: {
                             GoalRow(goal: goal)
                         }
                     }
@@ -118,6 +148,125 @@ struct ClientDetailView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var notesSection: some View {
+        let allNotes = client.notesNewestFirst
+        let recent = Array(allNotes.prefix(recentNotesLimit))
+
+        Section {
+            if allNotes.isEmpty {
+                Text("No session notes yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(recent) { note in
+                    NavigationLink {
+                        NoteDetailView(note: note)
+                    } label: {
+                        ClientNoteRow(note: note)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            noteToDelete = note
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+                if allNotes.count > recentNotesLimit {
+                    NavigationLink {
+                        ClientNotesListView(client: client)
+                    } label: {
+                        Label("View All Notes", systemImage: "list.bullet.rectangle")
+                            .font(.subheadline)
+                    }
+                }
+            }
+        } header: {
+            sectionHeader("Session Notes", count: allNotes.count)
+        }
+    }
+}
+
+struct ClientNotesListView: View {
+    @Bindable var client: Client
+    @Environment(\.modelContext) private var modelContext
+    @State private var noteToDelete: SessionNote?
+
+    var body: some View {
+        List {
+            ForEach(client.notesNewestFirst) { note in
+                NavigationLink {
+                    NoteDetailView(note: note)
+                } label: {
+                    ClientNoteRow(note: note)
+                }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        noteToDelete = note
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+        }
+        .navigationTitle("All Notes")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .alert("Delete Note?", isPresented: Binding(
+            get: { noteToDelete != nil },
+            set: { if !$0 { noteToDelete = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let n = noteToDelete {
+                    withAnimation { modelContext.delete(n) }
+                }
+                noteToDelete = nil
+            }
+            Button("Cancel", role: .cancel) { noteToDelete = nil }
+        } message: {
+            Text("This note will be permanently deleted.")
+        }
+    }
+}
+
+struct ClientNoteRow: View {
+    let note: SessionNote
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(note.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.subheadline.weight(.semibold))
+                if !snippet.isEmpty {
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            Text(note.displayName)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.tint.opacity(0.15))
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var snippet: String {
+        if note.noteFormat == .goalFocused {
+            let firstGoal = note.goalCards.first?.goal ?? ""
+            return firstGoal.isEmpty ? note.sessionObservations : firstGoal
+        }
+        return note.sections
+            .lazy
+            .map { note[keyPath: $0.keyPath] }
+            .first(where: { !$0.isEmpty }) ?? ""
     }
 }
 
