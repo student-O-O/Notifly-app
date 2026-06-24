@@ -346,9 +346,8 @@ struct NoteDetailView: View {
         Binding(
             get: { navigateToRegenerated },
             set: { newValue in
-                if newValue {
-                    navigateToRegenerated = true
-                } else {
+                navigateToRegenerated = newValue
+                if !newValue {
                     popToRoot()
                 }
             }
