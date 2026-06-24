@@ -8,10 +8,12 @@ struct ClientDetailView: View {
     @State private var showEditClient = false
     @State private var showNewGoal = false
     @State private var showArchived = false
+    @State private var showAllGoals = false
     @State private var goalToDelete: Goal?
     @State private var noteToDelete: SessionNote?
 
     private let recentNotesLimit = 5
+    private let activeGoalsLimit = 3
 
     var body: some View {
         List {
@@ -89,12 +91,15 @@ struct ClientDetailView: View {
 
     @ViewBuilder
     private var goalSection: some View {
+        let activeGoals = client.activeGoals
+        let visibleGoals = showAllGoals ? activeGoals : Array(activeGoals.prefix(activeGoalsLimit))
+
         Section {
-            if client.activeGoals.isEmpty {
+            if activeGoals.isEmpty {
                 Text("No active goals.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(client.activeGoals) { goal in
+                ForEach(visibleGoals) { goal in
                     NavigationLink {
                         GoalDetailView(goal: goal)
                     } label: {
@@ -108,6 +113,17 @@ struct ClientDetailView: View {
                         }
                     }
                 }
+                if activeGoals.count > activeGoalsLimit {
+                    Button {
+                        withAnimation { showAllGoals.toggle() }
+                    } label: {
+                        Label(
+                            showAllGoals ? "Show Less" : "Show All Goals (\(activeGoals.count))",
+                            systemImage: showAllGoals ? "chevron.up" : "chevron.down"
+                        )
+                        .font(.subheadline)
+                    }
+                }
             }
             Button {
                 showNewGoal = true
@@ -115,7 +131,7 @@ struct ClientDetailView: View {
                 Label("Add Goal", systemImage: "plus.circle")
             }
         } header: {
-            sectionHeader("Goals", count: client.activeGoals.count)
+            sectionHeader("Goals", count: activeGoals.count)
         }
     }
 
