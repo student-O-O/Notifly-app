@@ -16,10 +16,23 @@ struct NoteDetailView: View {
     @State private var regenerateTone: NoteTone = .standard
     @State private var regenerateFormat: NoteFormat = .soap
     @State private var navigateToRegenerated = false
+    @State private var showAssignClientSheet = false
 
     var body: some View {
         Form {
             headerSection
+
+            if note.client == nil {
+                Section {
+                    Button {
+                        showAssignClientSheet = true
+                    } label: {
+                        Label("Assign to Client", systemImage: "person.crop.circle.badge.plus")
+                    }
+                } footer: {
+                    Text("This note isn't linked to a client profile. Assign it to group it with that client's other notes.")
+                }
+            }
 
             if let transcript = note.transcript, !transcript.isEmpty {
                 transcriptSection(transcript)
@@ -61,6 +74,9 @@ struct NoteDetailView: View {
         }
         .sheet(isPresented: $showRegenerateSheet) {
             regenerateSheet
+        }
+        .sheet(isPresented: $showAssignClientSheet) {
+            AssignClientSheet(note: note, isPresented: $showAssignClientSheet)
         }
         .navigationDestination(isPresented: $navigateToRegenerated) {
             ReviewNoteView(
@@ -330,9 +346,8 @@ struct NoteDetailView: View {
         Binding(
             get: { navigateToRegenerated },
             set: { newValue in
-                if newValue {
-                    navigateToRegenerated = true
-                } else {
+                navigateToRegenerated = newValue
+                if !newValue {
                     popToRoot()
                 }
             }
@@ -359,5 +374,72 @@ struct NoteDetailView: View {
             .clipShape(Capsule())
             .padding(.bottom, 16)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
+struct AssignClientSheet: View {
+    @Bindable var note: SessionNote
+    @Binding var isPresented: Bool
+    @Query(sort: [SortDescriptor(\Client.lastName), SortDescriptor(\Client.firstName)]) private var clients: [Client]
+    @State private var searchText = ""
+
+    private var filteredClients: [Client] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return clients }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return clients.filter {
+            $0.firstName.range(of: trimmed, options: options) != nil
+                || $0.lastName.range(of: trimmed, options: options) != nil
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if clients.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Clients", systemImage: "person.crop.circle")
+                    } description: {
+                        Text("Create a client first to assign this note.")
+                    }
+                } else {
+                    List {
+                        ForEach(filteredClients) { client in
+                            Button {
+                                assign(client)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle().fill(.tint.opacity(0.15)).frame(width: 32, height: 32)
+                                        Text(client.initials)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.tint)
+                                    }
+                                    Text(client.displayName)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+                    .searchable(text: $searchText, prompt: "Search clients")
+                }
+            }
+            .navigationTitle("Assign to Client")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
+            }
+        }
+    }
+
+    private func assign(_ client: Client) {
+        note.client = client
+        note.clientName = client.displayName
+        isPresented = false
     }
 }
