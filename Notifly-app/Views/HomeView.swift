@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var noteToDelete: SessionNote?
     @State private var sessionToDelete: UUID?
     @State private var navigationPath = NavigationPath()
+    @State private var searchText = ""
 
     private let recentClientsLimit = 5
 
@@ -33,6 +34,14 @@ struct HomeView: View {
         .sorted { $0.date > $1.date }
     }
 
+    private var filteredGroupedSessions: [SessionGroup] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return groupedSessions }
+        return groupedSessions.filter {
+            $0.clientName.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
     private var bucketedSessions: [(label: String, sessions: [SessionGroup])] {
         let calendar = Calendar.current
         let now = Date()
@@ -40,7 +49,7 @@ struct HomeView: View {
         var today: [SessionGroup] = []
         var thisWeek: [SessionGroup] = []
         var earlier: [SessionGroup] = []
-        for session in groupedSessions {
+        for session in filteredGroupedSessions {
             if calendar.isDateInToday(session.date) {
                 today.append(session)
             } else if let weekStart, session.date >= weekStart {
@@ -83,6 +92,11 @@ struct HomeView: View {
                 ClientDetailView(client: client)
             }
             .navigationTitle("NOTIFLY")
+            #if os(iOS)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search by client")
+            #else
+            .searchable(text: $searchText, prompt: "Search by client")
+            #endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink {
@@ -149,9 +163,13 @@ struct HomeView: View {
         }
     }
 
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     private var sessionList: some View {
         List {
-            if !recentClients.isEmpty {
+            if !isSearching && !recentClients.isEmpty {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 12) {
@@ -172,14 +190,24 @@ struct HomeView: View {
                 }
             }
 
-            ForEach(bucketedSessions, id: \.label) { bucket in
-                Section(bucket.label) {
-                    ForEach(bucket.sessions) { session in
-                        sessionRow(for: session)
+            if isSearching && bucketedSessions.isEmpty {
+                Section {
+                    ContentUnavailableView.search(text: searchText)
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                ForEach(bucketedSessions, id: \.label) { bucket in
+                    Section(bucket.label) {
+                        ForEach(bucket.sessions) { session in
+                            sessionRow(for: session)
+                        }
                     }
                 }
             }
         }
+        #if os(iOS)
+        .scrollDismissesKeyboard(.immediately)
+        #endif
     }
 
     @ViewBuilder
