@@ -144,7 +144,7 @@ final class SessionNote {
 
         if noteFormat == .goalFocused {
             if !sessionObservations.isEmpty {
-                text += "Session Observations:\n\(sessionObservations)\n\n"
+                text += "Additional Observations:\n\(sessionObservations)\n\n"
             }
 
             let cards = goalCards

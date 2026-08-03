@@ -34,34 +34,65 @@ enum NoteGenerationError: LocalizedError {
 
 struct NoteGenerationService {
 
-    /// Low temperature: clinical drafting should be faithful to the
-    /// transcript, not creative.
-    private static let generationOptions = GenerationOptions(temperature: 0.1)
+    /// Mid-range on purpose: near-greedy decoding makes the model copy the
+    /// transcript verbatim, high temperature makes it embellish past the
+    /// evidence.
+    private static let temperature = 0.5
+
+    /// Ceilings, not targets — a backstop against a runaway field.
+    private enum TokenBudget {
+        static let factual = 800
+        static let interpretive = 400
+        static let goalListing = 1200
+        static let goalDetail = 600
+        static let sessionGate = 120
+        /// Kept small on purpose — most sessions leave nothing over once the
+        /// documented goals are covered, and a generous budget was inviting
+        /// the model to pad this field with restated goal content.
+        static let leftoverObservations = 300
+    }
 
     // MARK: - Public API
     //
-    // Each note is assembled from multiple small, single-purpose generation
-    // passes rather than one call producing every field at once. A small
-    // on-device model follows a short, focused instruction set far more
-    // reliably than a long one covering many cross-field rules at once, so
-    // splitting "extract the facts" from "interpret the facts" (and, for
-    // goal-focused notes, "list the goals" from "detail one goal")
-    // meaningfully improves consistency.
+    // Notes are built from several small passes. Apple's guidance for the
+    // on-device model is to break a complex task into simple ones and to keep
+    // every prompt short: input tokens must all be processed before the first
+    // output token appears, so instruction bulk is latency on every note.
+    //
+    // For goal-focused notes: when the client has documented goals, those
+    // goals are the fixed source of truth — one pass checks each documented
+    // goal against the transcript, and a separate pass captures anything
+    // discussed that isn't about any of them (`sessionObservations`), rather
+    // than letting the model invent or rename goals. Without a client
+    // profile, goals are discovered freehand from the transcript instead.
+    // Every per-goal pass sees the whole transcript and is told which single
+    // goal to write up and which to ignore.
+    //
+    // `clientContext` is reference material and lives in the prompt, not in
+    // `Instructions` — Instructions are the model's high-authority channel, and
+    // goal text there once caused a goal's target ("for 5 mins") to be written
+    // up as a measured result.
 
-    static func generateSOAP(transcript: String, tone: NoteTone = .standard) async throws -> SOAPNote {
+    static func generateSOAP(
+        transcript: String,
+        tone: NoteTone = .standard,
+        clientContext: ClientContext? = nil
+    ) async throws -> SOAPNote {
         let trimmed = try validate(transcript)
 
         let factual = try await generate(
             SOAPFactualPart.self,
-            transcript: trimmed,
-            request: "Extract the factual content of this session as the first pass of a SOAP note.",
-            instructions: factualInstructions(tone: tone, formatGuidance: Self.soapFactualGuidance)
+            source: trimmed,
+            request: "Extract the facts from this dictation.",
+            reference: clientReference(clientContext),
+            instructions: factualInstructions(tone: tone, sectionSplit: Self.soapSectionSplit),
+            maximumResponseTokens: TokenBudget.factual
         )
 
         guard factual.hasSufficientContent else {
             return SOAPNote(
                 hasSufficientContent: false,
-                insufficientContentReason: factual.insufficientContentReason,
+                insufficientContentReason: factual.insufficientContentReason ?? "",
                 subjective: "", objective: "", assessment: "", plan: "",
                 goalsAddressed: "", timeSpent: "", interventionsUsed: ""
             )
@@ -69,38 +100,46 @@ struct NoteGenerationService {
 
         let interpretive = try await generate(
             SOAPInterpretivePart.self,
-            transcript: trimmed,
-            request: "Extract the clinician's assessment and plan as the second pass of a SOAP note.",
-            instructions: interpretiveInstructions(tone: tone)
+            source: trimmed,
+            request: "Extract the clinician's conclusions and plan from this dictation.",
+            reference: clientReference(clientContext),
+            instructions: interpretiveInstructions(tone: tone),
+            maximumResponseTokens: TokenBudget.interpretive
         )
 
         return SOAPNote(
             hasSufficientContent: true,
             insufficientContentReason: "",
-            subjective: factual.subjective,
-            objective: factual.objective,
-            assessment: interpretive.assessment,
-            plan: interpretive.plan,
-            goalsAddressed: factual.goalsAddressed,
+            subjective: corrected(factual.subjective),
+            objective: corrected(factual.objective),
+            assessment: corrected(interpretive.assessment),
+            plan: corrected(interpretive.plan),
+            goalsAddressed: corrected(factual.goalsAddressed),
             timeSpent: factual.timeSpent,
-            interventionsUsed: factual.interventionsUsed
+            interventionsUsed: corrected(factual.interventionsUsed)
         )
     }
 
-    static func generateDAP(transcript: String, tone: NoteTone = .standard) async throws -> DAPNote {
+    static func generateDAP(
+        transcript: String,
+        tone: NoteTone = .standard,
+        clientContext: ClientContext? = nil
+    ) async throws -> DAPNote {
         let trimmed = try validate(transcript)
 
         let factual = try await generate(
             DAPFactualPart.self,
-            transcript: trimmed,
-            request: "Extract the factual content of this session as the first pass of a DAP note.",
-            instructions: factualInstructions(tone: tone, formatGuidance: Self.dapFactualGuidance)
+            source: trimmed,
+            request: "Extract the facts from this dictation.",
+            reference: clientReference(clientContext),
+            instructions: factualInstructions(tone: tone, sectionSplit: Self.dapSectionSplit),
+            maximumResponseTokens: TokenBudget.factual
         )
 
         guard factual.hasSufficientContent else {
             return DAPNote(
                 hasSufficientContent: false,
-                insufficientContentReason: factual.insufficientContentReason,
+                insufficientContentReason: factual.insufficientContentReason ?? "",
                 data: "", assessment: "", plan: "",
                 goalsAddressed: "", timeSpent: "", interventionsUsed: ""
             )
@@ -108,83 +147,272 @@ struct NoteGenerationService {
 
         let interpretive = try await generate(
             DAPInterpretivePart.self,
-            transcript: trimmed,
-            request: "Extract the clinician's assessment and plan as the second pass of a DAP note.",
-            instructions: interpretiveInstructions(tone: tone)
+            source: trimmed,
+            request: "Extract the clinician's conclusions and plan from this dictation.",
+            reference: clientReference(clientContext),
+            instructions: interpretiveInstructions(tone: tone),
+            maximumResponseTokens: TokenBudget.interpretive
         )
 
         return DAPNote(
             hasSufficientContent: true,
             insufficientContentReason: "",
-            data: factual.data,
-            assessment: interpretive.assessment,
-            plan: interpretive.plan,
-            goalsAddressed: factual.goalsAddressed,
+            data: corrected(factual.data),
+            assessment: corrected(interpretive.assessment),
+            plan: corrected(interpretive.plan),
+            goalsAddressed: corrected(factual.goalsAddressed),
             timeSpent: factual.timeSpent,
-            interventionsUsed: factual.interventionsUsed
+            interventionsUsed: corrected(factual.interventionsUsed)
         )
     }
 
-    static func generateGoalFocused(transcript: String, tone: NoteTone = .standard) async throws -> GoalFocusedNote {
+    static func generateGoalFocused(
+        transcript: String,
+        tone: NoteTone = .standard,
+        clientContext: ClientContext? = nil
+    ) async throws -> GoalFocusedNote {
         let trimmed = try validate(transcript)
 
-        let listing = try await generate(
-            GoalListing.self,
-            transcript: trimmed,
-            request: "Identify the session-level observations and each distinct goal addressed, as the first pass of a goal-focused note.",
-            instructions: goalListingInstructions(tone: tone)
+        if let clientContext, !clientContext.goals.isEmpty {
+            return try await generateGoalFocusedFromProfile(trimmed, tone: tone, clientContext: clientContext)
+        }
+
+        return try await generateGoalFocusedFreeform(trimmed, tone: tone, clientContext: clientContext)
+    }
+
+    /// The client's documented goals are the ground truth for what goals
+    /// exist — the model reports whether each known goal was addressed
+    /// today, it never names or invents one. Anything discussed that isn't
+    /// one of those goals lands in `sessionObservations` instead of becoming
+    /// a fabricated goal card.
+    private static func generateGoalFocusedFromProfile(
+        _ transcript: String,
+        tone: NoteTone,
+        clientContext: ClientContext
+    ) async throws -> GoalFocusedNote {
+        let gate = try await generate(
+            SessionGate.self,
+            source: transcript,
+            request: "Judge whether this is a real therapy session with clinical content.",
+            reference: nil,
+            instructions: sessionGateInstructions(),
+            maximumResponseTokens: TokenBudget.sessionGate
         )
 
-        guard listing.hasSufficientContent else {
+        guard gate.hasSufficientContent else {
             return GoalFocusedNote(
                 hasSufficientContent: false,
-                insufficientContentReason: listing.insufficientContentReason,
+                insufficientContentReason: gate.insufficientContentReason ?? "",
                 sessionObservations: "",
                 goals: []
             )
         }
 
-        guard !listing.goals.isEmpty else {
+        var goals: [GeneratedGoal] = []
+        for goal in clientContext.goals {
+            let writeUp = try await generate(
+                GoalWriteUp.self,
+                source: transcript,
+                request: "Was the goal \"\(goal.title)\" addressed in today's session? If so, write it up.",
+                reference: singleGoalReference(clientContext, goal: goal),
+                instructions: goalWriteUpInstructions(tone: tone),
+                maximumResponseTokens: TokenBudget.goalDetail
+            )
+
+            let activities = corrected(writeUp.activities)
+            var observations = corrected(writeUp.observations)
+            let nextSteps = corrected(writeUp.nextSteps)
+
+            // Empty across the board means this documented goal wasn't
+            // addressed today — omit the card rather than show the
+            // clinician a goal with nothing in it.
+            guard !activities.isEmpty || !observations.isEmpty || !nextSteps.isEmpty else {
+                continue
+            }
+
+            if isGoalEcho(observations, goal: goal.title) {
+                observations = ""
+            }
+
+            goals.append(GeneratedGoal(
+                goal: goal.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                activities: activities,
+                observations: observations,
+                nextSteps: nextSteps
+            ))
+        }
+
+        // Run only once every documented goal has its own write-up, and
+        // grounded on that actual text — giving the model something concrete
+        // to diff against caught far more repeats in testing than telling it
+        // to avoid the (abstract) goal list ever did.
+        let leftover = try await generate(
+            LeftoverObservations.self,
+            source: transcript,
+            request: "Summarise anything in today's session the goal write-ups below don't already cover.",
+            reference: coveredGoalsReference(goals),
+            instructions: leftoverObservationsInstructions(tone: tone),
+            maximumResponseTokens: TokenBudget.leftoverObservations
+        )
+
+        let additionalObservations = stripDuplicateContent(corrected(leftover.text), goals: goals)
+
+        return GoalFocusedNote(
+            hasSufficientContent: true,
+            insufficientContentReason: "",
+            sessionObservations: additionalObservations,
+            goals: goals
+        )
+    }
+
+    /// No client profile to anchor on, so goals are discovered freehand from
+    /// the transcript instead of checked off a known list.
+    private static func generateGoalFocusedFreeform(
+        _ transcript: String,
+        tone: NoteTone,
+        clientContext: ClientContext?
+    ) async throws -> GoalFocusedNote {
+        let listing = try await generate(
+            GoalListing.self,
+            source: transcript,
+            request: "Split this dictation into the goals the clinician worked on.",
+            reference: clientReference(clientContext),
+            instructions: goalListingInstructions(),
+            maximumResponseTokens: TokenBudget.goalListing
+        )
+
+        guard listing.hasSufficientContent else {
             return GoalFocusedNote(
-                hasSufficientContent: true,
-                insufficientContentReason: "",
-                sessionObservations: listing.sessionObservations,
+                hasSufficientContent: false,
+                insufficientContentReason: listing.insufficientContentReason ?? "",
+                sessionObservations: "",
                 goals: []
             )
         }
 
-        // One call per goal, run sequentially: each pass is told exactly which
-        // activities belong to its goal and which belong to the others, so the
-        // model doesn't have to self-partition transcript evidence across every
-        // goal at once — the failure mode that made goal-focused notes the
-        // least reliable format.
         var goals: [GeneratedGoal] = []
-        for (index, stub) in listing.goals.enumerated() {
-            let otherGoals = listing.goals.enumerated()
-                .filter { $0.offset != index }
-                .map(\.element)
-
+        for stub in listing.goals {
             let detail = try await generate(
                 GoalDetail.self,
-                transcript: trimmed,
-                request: "Write the observations and next steps for this one goal only: \"\(stub.goal)\".",
-                instructions: goalDetailInstructions(tone: tone, targetGoal: stub, otherGoals: otherGoals)
+                source: transcript,
+                request: "Write up only this goal: \"\(stub.goal)\". The transcript covers other goals too — ignore everything not about this one.",
+                reference: nameOnlyReference(clientContext),
+                instructions: goalDetailInstructions(tone: tone),
+                maximumResponseTokens: TokenBudget.goalDetail
             )
 
+            var observations = corrected(detail.observations)
+            if isGoalEcho(observations, goal: stub.goal) {
+                observations = ""
+            }
+
             goals.append(GeneratedGoal(
-                goal: stub.goal,
-                activities: stub.activities,
-                observations: detail.observations,
-                nextSteps: detail.nextSteps
+                goal: corrected(stub.goal),
+                activities: corrected(stub.activities),
+                observations: observations,
+                nextSteps: corrected(detail.nextSteps)
             ))
         }
 
         return GoalFocusedNote(
             hasSufficientContent: true,
             insufficientContentReason: "",
-            sessionObservations: listing.sessionObservations,
+            sessionObservations: "",
             goals: goals
         )
+    }
+
+    // MARK: - Deterministic post-processing
+    //
+    // Fixes that prompting has repeatedly failed to deliver. String work is
+    // free and cannot regress, so it lives here rather than in the prompts.
+
+    /// Speech-recognition errors this dictation domain hits constantly.
+    /// "pier" survived four prompt revisions; code does not forget.
+    private static let speechCorrections: [(pattern: String, replacement: String)] = [
+        ("\\bpier\\b", "peer"),
+        ("\\bPier\\b", "Peer"),
+        ("\\bpiers\\b", "peers"),
+        ("\\bPiers\\b", "peers"),
+        ("was said back", "was sent back"),
+    ]
+
+    private static func corrected(_ text: String) -> String {
+        var result = text
+        for correction in speechCorrections {
+            result = result.replacingOccurrences(
+                of: correction.pattern,
+                with: correction.replacement,
+                options: .regularExpression
+            )
+        }
+        return result
+    }
+
+    /// True when the observations are just the goal statement read back — the
+    /// model's habit when its extract held nothing observational.
+    private static func isGoalEcho(_ observations: String, goal: String) -> Bool {
+        let observed = normalise(observations)
+        let goalText = normalise(goal)
+        guard !observed.isEmpty, !goalText.isEmpty else { return false }
+        return observed == goalText || goalText.contains(observed)
+    }
+
+    /// Backstop for the leftover-observations pass: drops any sentence that
+    /// heavily overlaps a goal's own generated text, and collapses exact
+    /// repeats — a cheap net under the "already written up" instruction for
+    /// when the model restates a goal anyway, or loops on one sentence.
+    private static func stripDuplicateContent(_ text: String, goals: [GeneratedGoal]) -> String {
+        let goalWordSets: [Set<String>] = goals.map { goal in
+            let combined = [goal.activities, goal.observations, goal.nextSteps].joined(separator: " ")
+            return Set(normalise(combined).split(separator: " ").map(String.init))
+        }
+
+        var seenSentences = Set<String>()
+        var kept: [String] = []
+
+        for rawSentence in text.split(separator: ".") {
+            let sentence = rawSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sentence.isEmpty else { continue }
+
+            let normalisedSentence = normalise(sentence)
+            guard seenSentences.insert(normalisedSentence).inserted else { continue }
+
+            let words = normalisedSentence.split(separator: " ").map(String.init)
+            let sentenceWords = Set(words)
+            let overlapsAGoal = words.count >= 4 && goalWordSets.contains { goalWords in
+                Double(sentenceWords.intersection(goalWords).count) / Double(sentenceWords.count) >= 0.6
+            }
+
+            if !overlapsAGoal {
+                kept.append(sentence)
+            }
+        }
+
+        guard !kept.isEmpty else { return "" }
+        return kept.joined(separator: ". ") + "."
+    }
+
+    // MARK: - Transcript normalisation
+
+    /// Lowercased, punctuation-free version of the text. The model reproduces
+    /// wording far more reliably than punctuation, so goal-echo comparison
+    /// happens on the normalised form.
+    private static func normalise(_ text: String) -> String {
+        var output = ""
+        var lastWasSpace = true
+
+        for character in text {
+            if character.isLetter || character.isNumber {
+                output += String(character).lowercased()
+                lastWasSpace = false
+            } else if !lastWasSpace {
+                output.append(" ")
+                lastWasSpace = true
+            }
+        }
+
+        return output
     }
 
     // MARK: - Core generation
@@ -196,22 +424,30 @@ struct NoteGenerationService {
         return trimmed
     }
 
+    /// `source` is the text the pass may draw on — the whole dictation.
     private static func generate<Output: Generable>(
         _ type: Output.Type,
-        transcript: String,
+        source: String,
         request: String,
-        instructions: Instructions
+        reference: String?,
+        instructions: Instructions,
+        maximumResponseTokens: Int
     ) async throws -> Output {
         let session = LanguageModelSession(instructions: instructions)
-        let prompt = """
-            \(request)
 
-            Transcript:
-            \(transcript)
-            """
+        var prompt = request
+        if let reference {
+            prompt += "\n\n\(reference)"
+        }
+        prompt += "\n\nTRANSCRIPT (the only source):\n\(source)"
+
+        let options = GenerationOptions(
+            temperature: temperature,
+            maximumResponseTokens: maximumResponseTokens
+        )
 
         do {
-            let response = try await session.respond(to: prompt, generating: Output.self, options: generationOptions)
+            let response = try await session.respond(to: prompt, generating: Output.self, options: options)
             return response.content
         } catch let error as LanguageModelSession.GenerationError {
             throw map(error)
@@ -251,71 +487,134 @@ struct NoteGenerationService {
         }
     }
 
-    // MARK: - Shared instruction fragments
+    // MARK: - Reference material (prompt side)
+
+    private static func clientReference(_ context: ClientContext?) -> String? {
+        guard let context, context.hasProfileContent else { return nil }
+
+        var block = "CLIENT (background only, not evidence)"
+
+        let name = context.displayName.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty {
+            block += "\nName: \(name) — use this spelling."
+        }
+
+        if !context.goals.isEmpty {
+            let list = context.goals.enumerated().map { index, goal -> String in
+                let title = goal.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let details = goal.details.trimmingCharacters(in: .whitespacesAndNewlines)
+                return details.isEmpty ? "\(index + 1). \(title)" : "\(index + 1). \(title) — \(details)"
+            }.joined(separator: "\n")
+
+            block += """
+
+
+                Goals on file:
+                \(list)
+
+                These were set at an earlier date. They are NOT a record of today. \
+                Use this wording where the dictation covers one of them. Any number in \
+                the wording is a target, never a result — DO NOT report one as measured \
+                today. DO NOT list a goal from this file unless the dictation shows it \
+                was worked on today.
+                """
+        }
+
+        return block
+    }
+
+    private static func nameOnlyReference(_ context: ClientContext?) -> String? {
+        guard let context else { return nil }
+        let name = context.displayName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        return "CLIENT NAME: \(name) — use this spelling."
+    }
+
+    /// Reference for a single documented goal's write-up pass — only that
+    /// goal's own title and details, not the client's full goal list, so a
+    /// neighbouring goal's wording cannot leak into this one.
+    private static func singleGoalReference(_ context: ClientContext, goal: GoalContext) -> String {
+        var block = "CLIENT (background only, not evidence)"
+
+        let name = context.displayName.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty {
+            block += "\nName: \(name) — use this spelling."
+        }
+
+        let title = goal.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let details = goal.details.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goalLine = details.isEmpty ? title : "\(title) — \(details)"
+
+        block += """
+
+
+            The one documented goal you are writing up:
+            \(goalLine)
+
+            This was set at an earlier date. It is NOT a record of today. Any number in \
+            the wording is a target, never a result — DO NOT report one as measured today.
+            """
+
+        return block
+    }
+
+    /// What the per-goal passes actually produced, for the leftover-content
+    /// pass to diff against. Concrete generated text, not the abstract goal
+    /// list — the model needs something to compare against, not just a rule
+    /// to remember.
+    private static func coveredGoalsReference(_ goals: [GeneratedGoal]) -> String {
+        guard !goals.isEmpty else {
+            return "ALREADY WRITTEN UP: none of the client's documented goals were addressed today."
+        }
+
+        let entries = goals.map { goal -> String in
+            var lines = ["Goal: \(goal.goal)"]
+            if !goal.activities.isEmpty { lines.append("Activities: \(goal.activities)") }
+            if !goal.observations.isEmpty { lines.append("Observations: \(goal.observations)") }
+            if !goal.nextSteps.isEmpty { lines.append("Next steps: \(goal.nextSteps)") }
+            return lines.joined(separator: "\n")
+        }.joined(separator: "\n\n")
+
+        return """
+            ALREADY WRITTEN UP (do not repeat or rephrase any of this):
+            \(entries)
+            """
+    }
+
+    // MARK: - Instructions
+    //
+    // Short commands, not essays. Field-level rules live in the `@Guide`
+    // descriptions and are deliberately not repeated here.
 
     private static let assistantPreamble = """
-        You are a clinical documentation assistant for allied health \
-        professionals (occupational therapy, physiotherapy, speech \
-        pathology, and similar disciplines). You turn a raw, imperfect \
-        speech-to-text transcript of a clinician's post-session dictation \
-        into a structured draft note.
+        You turn an allied health clinician's dictated session summary into a \
+        structured draft note. The clinician reviews and signs it.
         """
 
-    private static let sufficiencyCheckRule = """
-        0. SUFFICIENCY CHECK FIRST. Before filling any field, decide whether the \
-        transcript actually contains clinical content from a real therapy session. \
-        If it is a test recording, small talk, meta-commentary about the app, \
-        empty/near-empty, or otherwise not a real clinical session, set \
-        hasSufficientContent = false, write a brief reason in \
-        insufficientContentReason, and LEAVE EVERY OTHER FIELD EMPTY. \
-        Do not invent goals, activities, observations, or plans to fill the \
-        schema. Refusing to generate a note is the correct outcome here.
+    private static let coreRules = """
+        DO NOT write anything the clinician did not say.
+        DO NOT invent numbers, durations or prompt levels.
+        DO NOT say what the client felt, understood or intended.
+        DO NOT say a goal was met unless the clinician said so.
+        Leave a field empty rather than guessing.
+        Fix obvious speech errors: "pier" and "Piers" mean "peer" and "peers".
+        Cut filler and the clinician's asides such as "so that was good to see".
         """
 
-    private static let coreEvidenceRules = """
-        EVIDENCE RULES — these override everything else:
-        1. Ground every statement in the transcript. Never invent client \
-        history, assessment findings, outcomes, goals, or clinical detail \
-        the clinician did not say.
-        2. If the transcript contains nothing for a section, leave that \
-        section empty. An empty section is always better than fabricated \
-        or generic filler content.
-        3. Never state a goal as achieved or progress as made unless the \
-        clinician explicitly says so.
-        4. PRESERVE every clinically meaningful detail: measurable data \
-        (counts, durations, distances, prompt levels, assistance levels), \
-        specific observable behaviour in the clinician's original words, \
-        and quotes that carry clinical meaning. Attribute every quote to \
-        the correct speaker.
-        5. REMOVE everything else: filler words, false starts, \
-        self-narration, and conversational chatter. Length is a \
-        consequence, never a target — do NOT drop a measurable detail to \
-        shorten a section.
-        6. Silently correct obvious speech-recognition errors when the \
-        intended word is unambiguous (e.g. "pincher grasp" → "pincer \
-        grasp"). If the intended word is ambiguous, keep it as transcribed.
-        7. You are NOT a diagnostic tool. Your output is a draft for the \
-        treating clinician to review, edit, and sign.
-        """
+    private static let soapSectionSplit = "Subjective is what people reported; Objective is what was done and seen."
 
-    // MARK: - Instructions: factual / interpretive passes (SOAP & DAP)
+    private static let dapSectionSplit = "Data holds everything factual, reported and observed alike."
 
-    private static func factualInstructions(tone: NoteTone, formatGuidance: String) -> Instructions {
+    private static func factualInstructions(tone: NoteTone, sectionSplit: String) -> Instructions {
         Instructions("""
             \(assistantPreamble)
 
-            This is the FACT-EXTRACTION pass. Pull out what was reported and what \
-            was observed. Do not interpret, evaluate progress, or state conclusions \
-            — that happens in a separate pass. Just extract and organize facts.
+            Extract the facts. Conclusions and plans are handled separately — leave them out.
+            \(sectionSplit)
 
-            \(sufficiencyCheckRule)
-            \(coreEvidenceRules)
+            \(coreRules)
 
-            WRITING STYLE:
-            \(tone.promptText)
-
-            FORMAT:
-            \(formatGuidance)
+            Style: \(tone.promptText)
             """)
     }
 
@@ -323,104 +622,95 @@ struct NoteGenerationService {
         Instructions("""
             \(assistantPreamble)
 
-            This is the INTERPRETATION pass. Capture only the clinician's own \
-            stated interpretation of progress, barriers, response to intervention, \
-            and next steps. The factual details of the session have already been \
-            captured in a separate pass — do not restate them here, only \
-            synthesize meaning and plans.
+            Extract only the clinician's own conclusions and plan. The facts are handled separately.
 
-            \(coreEvidenceRules)
+            \(coreRules)
 
-            WRITING STYLE:
-            \(tone.promptText)
-
-            FORMAT:
-            \(Self.interpretiveGuidance)
+            Style: \(tone.promptText)
             """)
     }
 
-    private static let soapFactualGuidance = """
-        Produce the factual portion of a SOAP note:
-        - Subjective: only what the client or their caregiver reported — \
-        feelings, pain, concerns, events outside the session. Never the \
-        clinician's own observations.
-        - Objective: observable, measurable findings — activities performed \
-        and the client's measured performance (counts, durations, assistance \
-        levels).
-        Also extract: goals explicitly worked on, session duration (only if \
-        explicitly stated), and interventions/techniques actually used.
-        """
-
-    private static let dapFactualGuidance = """
-        Produce the factual portion of a DAP note:
-        - Data: all factual information from the session — what the client \
-        or caregiver reported, activities performed, and measured performance \
-        (counts, durations, assistance levels).
-        Also extract: goals explicitly worked on, session duration (only if \
-        explicitly stated), and interventions/techniques actually used.
-        """
-
-    private static let interpretiveGuidance = """
-        - Assessment: the clinician's stated interpretation of progress, \
-        barriers, and responses. Synthesize only what was said.
-        - Plan: explicitly stated next steps — next-session focus, home \
-        programs, referrals, frequency changes.
-        """
-
-    // MARK: - Instructions: goal-focused listing / detail passes
-
-    private static func goalListingInstructions(tone: NoteTone) -> Instructions {
+    /// Only used when the client has no documented goals to anchor on.
+    private static func goalListingInstructions() -> Instructions {
         Instructions("""
             \(assistantPreamble)
 
-            This is the GOAL-IDENTIFICATION pass. Identify session-level \
-            observations and each distinct goal the clinician addressed, along \
-            with only the activities performed toward each goal. Do NOT fill in \
-            observations or next steps yet — that happens in a later pass, one \
-            goal at a time.
+            List the goals the clinician worked on during this session. For each one, \
+            give the goal and the activities.
 
-            \(sufficiencyCheckRule)
-            \(coreEvidenceRules)
+            The clinician signposts each goal — "his goal of...", "the next goal is...", \
+            "the third goal we focussed on". Use those signposts to find the goals.
 
-            Include a goal only if an activity was actually performed against it \
-            during the session. Do not duplicate goals or pad the list. Every \
-            activity in the transcript belongs to exactly one goal — do not list \
-            the same activity under more than one goal. If the transcript does \
-            not mention any goals, return an empty goals array rather than \
-            inventing one.
+            A goal is something worked on TODAY. What the clinician plans for next time \
+            is not a goal.
 
-            WRITING STYLE:
-            \(tone.promptText)
+            \(coreRules)
             """)
     }
 
-    private static func goalDetailInstructions(tone: NoteTone, targetGoal: GoalStub, otherGoals: [GoalStub]) -> Instructions {
-        let otherGoalsList = otherGoals.isEmpty
-            ? "There are no other goals this session — all matching transcript evidence belongs to this goal."
-            : otherGoals.map { "- \($0.goal) (activities: \($0.activities))" }.joined(separator: "\n")
-
-        return Instructions("""
+    /// Only used when the client has no documented goals to anchor on.
+    private static func goalDetailInstructions(tone: NoteTone) -> Instructions {
+        Instructions("""
             \(assistantPreamble)
 
-            This is the GOAL-DETAIL pass for ONE specific goal. A previous pass \
-            already identified every goal addressed this session and the \
-            activities performed toward each. Your job is to write the \
-            observations and next steps for ONLY this goal — do not describe \
-            evidence belonging to any other goal, even if it appears nearby in \
-            the transcript.
+            The transcript below covers the whole session, likely several goals. Write up \
+            ONLY the one goal named in the request. Do not let another goal's activities, \
+            observations or plan appear in your answer — if the transcript covers other \
+            goals, ignore that part of it entirely.
 
-            THIS GOAL:
-            Goal: \(targetGoal.goal)
-            Activities for this goal: \(targetGoal.activities)
+            \(coreRules)
 
-            OTHER GOALS THIS SESSION (their evidence belongs to THEM — do not \
-            reuse it here):
-            \(otherGoalsList)
+            Style: \(tone.promptText)
+            """)
+    }
 
-            \(coreEvidenceRules)
+    private static func sessionGateInstructions() -> Instructions {
+        Instructions("""
+            \(assistantPreamble)
 
-            WRITING STYLE:
-            \(tone.promptText)
+            Judge whether this transcript is a real therapy session with clinical \
+            content, or a test recording, small talk, or chatter about the app.
+            """)
+    }
+
+    private static func goalWriteUpInstructions(tone: NoteTone) -> Instructions {
+        Instructions("""
+            \(assistantPreamble)
+
+            The transcript below covers the whole session, likely several goals. The \
+            CLIENT block names ONE specific documented goal — write up only that goal. If \
+            the transcript does not show this specific goal being worked on today, leave \
+            activities, observations and next steps all empty. Do not describe another \
+            goal's activities here, and do not invent activity for a goal that was not \
+            addressed today.
+
+            If the transcript describes more than one relevant moment for this goal, \
+            include all of them in observations, not just the clearest one. If the \
+            clinician proposed a specific phrase or technique to try next time, keep it \
+            in next steps rather than just the gist.
+
+            \(coreRules)
+
+            Style: \(tone.promptText)
+            """)
+    }
+
+    private static func leftoverObservationsInstructions(tone: NoteTone) -> Instructions {
+        Instructions("""
+            \(assistantPreamble)
+
+            The reference below shows what has already been written up from today's \
+            session, goal by goal. Your only job is to report anything else in the \
+            transcript that ISN'T already covered there — do not restate, rephrase or \
+            summarise any of it again, even briefly. Leave your answer empty if there is \
+            nothing left to add.
+
+            A stated plan for next time is not something that happened today — do not \
+            report it as an observation here or anywhere.
+
+            \(coreRules)
+
+            Style: \(tone.promptText)
             """)
     }
 }
