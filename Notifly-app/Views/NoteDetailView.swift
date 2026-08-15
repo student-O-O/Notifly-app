@@ -162,7 +162,7 @@ struct NoteDetailView: View {
 
     @ViewBuilder
     private var goalFocusedSections: some View {
-        Section("Session Observations") {
+        Section("Additional Observations") {
             if isEditing {
                 TextEditor(text: $note.sessionObservations)
                     .frame(minHeight: 60)

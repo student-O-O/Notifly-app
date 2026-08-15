@@ -362,7 +362,7 @@ struct ReviewNoteView: View {
 
     @ViewBuilder
     private var goalFocusedFields: some View {
-        Section("Session Observations") {
+        Section("Additional Observations") {
             TextEditor(text: $sessionObservations)
                 .frame(minHeight: 60)
         }
