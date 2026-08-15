@@ -124,6 +124,22 @@ struct SessionGate {
     var insufficientContentReason: String?
 }
 
+/// Locates each documented goal in the transcript so the per-goal write-up
+/// pass can be given a narrowed window instead of the whole session — the
+/// goal never has to be discovered or named here, only found, since the
+/// title is already known.
+@Generable(description: "Where each of the client's documented goals begins in today's session, if addressed.")
+struct GoalAnchorSet {
+    @Guide(description: "One entry for every goal in the CLIENT block below, in the exact same order — including an empty entry for a goal not addressed today.")
+    var anchors: [GoalAnchor]
+}
+
+@Generable(description: "Where one documented goal's discussion begins in the transcript, if it was addressed today.")
+struct GoalAnchor {
+    @Guide(description: "The first six words, exactly as spoken, of the sentence where the clinician begins this goal. Empty if this goal was not addressed today, or if there is no clear starting point.")
+    var sectionStart: String
+}
+
 @Generable(description: "How one of the client's documented goals was addressed in today's session.")
 struct GoalWriteUp {
     @Guide(description: "A short phrase naming the tasks done toward this goal today, such as 'Played with trucks' or 'Discussion with mum'. Use your own words rather than quoting the transcript verbatim. Empty if this goal was not addressed today.")

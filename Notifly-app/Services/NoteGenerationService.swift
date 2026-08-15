@@ -46,6 +46,7 @@ struct NoteGenerationService {
         static let goalListing = 1200
         static let goalDetail = 600
         static let sessionGate = 120
+        static let goalAnchors = 400
         /// Kept small on purpose — most sessions leave nothing over once the
         /// documented goals are covered, and a generous budget was inviting
         /// the model to pad this field with restated goal content.
@@ -208,11 +209,13 @@ struct NoteGenerationService {
             )
         }
 
+        let slices = try await resolveGoalSlices(transcript, clientContext: clientContext)
+
         var goals: [GeneratedGoal] = []
-        for goal in clientContext.goals {
+        for (index, goal) in clientContext.goals.enumerated() {
             let writeUp = try await generate(
                 GoalWriteUp.self,
-                source: transcript,
+                source: slices[index] ?? transcript,
                 request: "Was the goal \"\(goal.title)\" addressed in today's session? If so, write it up.",
                 reference: singleGoalReference(clientContext, goal: goal),
                 instructions: goalWriteUpInstructions(tone: tone),
@@ -263,6 +266,74 @@ struct NoteGenerationService {
             sessionObservations: additionalObservations,
             goals: goals
         )
+    }
+
+    /// Narrows the transcript passed to each documented goal's write-up pass,
+    /// when a reliable starting point can be found for it. Not a hard
+    /// partition — a goal without a resolvable anchor, or one whose anchor
+    /// collides with another goal's, is simply absent from the result and its
+    /// write-up pass falls back to the full transcript, the same protection
+    /// (the "write up only this goal" instruction) every goal had before this
+    /// existed.
+    private static func resolveGoalSlices(
+        _ transcript: String,
+        clientContext: ClientContext
+    ) async throws -> [Int: String] {
+        let anchorSet = try await generate(
+            GoalAnchorSet.self,
+            source: transcript,
+            request: "Find where each documented goal's discussion begins, if it was addressed today.",
+            reference: clientReference(clientContext),
+            instructions: goalAnchorInstructions(),
+            maximumResponseTokens: TokenBudget.goalAnchors
+        )
+
+        // A mismatched count means the positional correspondence to
+        // `clientContext.goals` can't be trusted — skip slicing entirely
+        // rather than risk pairing an anchor with the wrong goal.
+        guard anchorSet.anchors.count == clientContext.goals.count else { return [:] }
+
+        return sliceByAnchors(transcript, anchors: anchorSet.anchors.map(\.sectionStart))
+    }
+
+    /// Resolves each anchor to a position in the transcript, drops any pair
+    /// that landed suspiciously close together (a sign of an ambiguous
+    /// match), and cuts each remaining anchor's slice from its position to
+    /// the next one.
+    private static func sliceByAnchors(_ transcript: String, anchors: [String]) -> [Int: String] {
+        struct Anchor { let goalIndex: Int; let position: Int }
+
+        let normalised = normaliseWithMap(transcript)
+
+        var resolved: [Anchor] = []
+        for (goalIndex, anchor) in anchors.enumerated() {
+            guard !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let position = locateOffset(anchor, in: normalised.text) else { continue }
+            resolved.append(Anchor(goalIndex: goalIndex, position: position))
+        }
+
+        let collisionDistance = 20
+        let clean = resolved
+            .filter { candidate in
+                resolved.allSatisfy { other in
+                    other.goalIndex == candidate.goalIndex || abs(other.position - candidate.position) >= collisionDistance
+                }
+            }
+            .sorted { $0.position < $1.position }
+
+        var slices: [Int: String] = [:]
+        for (i, anchor) in clean.enumerated() {
+            guard anchor.position < normalised.map.count else { continue }
+            let start = normalised.map[anchor.position]
+            let end = i + 1 < clean.count && clean[i + 1].position < normalised.map.count
+                ? normalised.map[clean[i + 1].position]
+                : transcript.endIndex
+            let slice = transcript[start..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !slice.isEmpty {
+                slices[anchor.goalIndex] = slice
+            }
+        }
+        return slices
     }
 
     /// No client profile to anchor on, so goals are discovered freehand from
@@ -413,6 +484,57 @@ struct NoteGenerationService {
         }
 
         return output
+    }
+
+    /// Same normalisation as above, but keeping a map from each normalised
+    /// character back to its index in the original — needed to turn a match
+    /// found in the normalised text back into a cut point in the real
+    /// transcript for slicing.
+    private static func normaliseWithMap(_ text: String) -> (text: String, map: [String.Index]) {
+        var output = ""
+        var map: [String.Index] = []
+        var lastWasSpace = true
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isLetter || character.isNumber {
+                for scalar in String(character).lowercased() {
+                    output.append(scalar)
+                    map.append(index)
+                }
+                lastWasSpace = false
+            } else if !lastWasSpace {
+                output.append(" ")
+                map.append(index)
+                lastWasSpace = true
+            }
+            index = text.index(after: index)
+        }
+
+        return (output, map)
+    }
+
+    /// Finds an anchor phrase's offset in already-normalised text, sliding the
+    /// window along the anchor as well as shortening it. A dropped or altered
+    /// leading word ("the 3rd goal" dictated, "the third goal" reported back)
+    /// then still resolves on a later run of words, at the cost of a few
+    /// words of signpost text off the front of the slice rather than losing
+    /// the whole section.
+    private static func locateOffset(_ anchor: String, in normalisedText: String) -> Int? {
+        let words = normalise(anchor).split(separator: " ").map(String.init)
+        guard words.count >= 3 else { return nil }
+
+        for start in 0...(words.count - 3) {
+            let longest = min(words.count - start, 6)
+            guard longest >= 3 else { continue }
+            for length in stride(from: longest, through: 3, by: -1) {
+                let phrase = words[start..<(start + length)].joined(separator: " ")
+                guard let range = normalisedText.range(of: phrase) else { continue }
+                return normalisedText.distance(from: normalisedText.startIndex, to: range.lowerBound)
+            }
+        }
+        return nil
     }
 
     // MARK: - Core generation
@@ -673,13 +795,31 @@ struct NoteGenerationService {
             """)
     }
 
+    private static func goalAnchorInstructions() -> Instructions {
+        Instructions("""
+            \(assistantPreamble)
+
+            The CLIENT block below lists the client's documented goals, in order. For \
+            each one, find where its discussion begins in today's transcript, if it was \
+            addressed today. Give one entry per goal, in the same order as the list, \
+            including an empty entry for a goal that was not addressed.
+
+            The clinician often signposts a goal — "his goal of...", "the next goal is...", \
+            "the third goal we focussed on" — but not always; some sessions move straight \
+            into a goal's activities without naming it first. If you cannot find a clear \
+            starting point for a goal you believe was addressed, leave its entry empty \
+            rather than guessing.
+            """)
+    }
+
     private static func goalWriteUpInstructions(tone: NoteTone) -> Instructions {
         Instructions("""
             \(assistantPreamble)
 
-            The transcript below covers the whole session, likely several goals. The \
-            CLIENT block names ONE specific documented goal — write up only that goal. If \
-            the transcript does not show this specific goal being worked on today, leave \
+            The transcript below may cover this goal alone, or the whole session — the \
+            CLIENT block names ONE specific documented goal, and it is the only one you \
+            write up regardless of how much of the session the transcript covers. If the \
+            transcript does not show this specific goal being worked on today, leave \
             activities, observations and next steps all empty. Do not describe another \
             goal's activities here, and do not invent activity for a goal that was not \
             addressed today.
