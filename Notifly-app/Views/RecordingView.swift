@@ -32,7 +32,7 @@ struct RecordingView: View {
             isAuthorized = await SpeechRecognizer.requestAuthorization()
             if isAuthorized && !didAutoStart {
                 didAutoStart = true
-                startRecording()
+                await startRecording()
             }
         }
         .navigationDestination(isPresented: $showReview) {
@@ -120,16 +120,18 @@ struct RecordingView: View {
     }
 
     private var promptText: String {
+        // The transcript builds up during the session now, so it takes over from
+        // the hint as soon as there are words to show.
+        if !speechRecognizer.transcript.isEmpty {
+            return speechRecognizer.transcript
+        }
         if speechRecognizer.isRecording {
             if speechRecognizer.isPaused {
                 return "Paused. Tap the orb to resume, or Generate Note to finish."
             }
             return "Recording... Tap the orb to pause, or Generate Note when finished."
         }
-        if speechRecognizer.transcript.isEmpty {
-            return "Preparing microphone..."
-        }
-        return speechRecognizer.transcript
+        return "Preparing microphone..."
     }
 
     private var recordButton: some View {
@@ -143,7 +145,7 @@ struct RecordingView: View {
                     pauseTimer()
                 }
             } else {
-                startRecording()
+                Task { await startRecording() }
             }
         } label: {
             if speechRecognizer.isRecording {
@@ -252,9 +254,9 @@ struct RecordingView: View {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    private func startRecording() {
+    private func startRecording() async {
         do {
-            try speechRecognizer.startRecording()
+            try await speechRecognizer.startRecording()
             elapsedSeconds = 0
             startTimer()
         } catch {

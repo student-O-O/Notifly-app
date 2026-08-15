@@ -430,12 +430,20 @@ struct ReviewNoteView: View {
         }
     }
 
+    /// Snapshot of the client's documented goals for the generation passes. Nil
+    /// when the note isn't tied to a client record, which drops goal-focused
+    /// notes back to discovering goals from the transcript alone.
+    private var clientContext: ClientContext? {
+        client.map { ClientContext(client: $0) }
+    }
+
     private func generateNote() async {
         let currentTone = selectedTone ?? tone
+        let context = clientContext
         do {
             switch noteFormat {
             case .soap:
-                let note = try await NoteGenerationService.generateSOAP(transcript: transcript, tone: currentTone)
+                let note = try await NoteGenerationService.generateSOAP(transcript: transcript, tone: currentTone, clientContext: context)
                 guard note.hasSufficientContent else {
                     insufficientContentReason = note.insufficientContentReason
                     isGenerating = false
@@ -449,7 +457,7 @@ struct ReviewNoteView: View {
                 timeSpent = note.timeSpent
                 interventionsUsed = note.interventionsUsed
             case .dap:
-                let note = try await NoteGenerationService.generateDAP(transcript: transcript, tone: currentTone)
+                let note = try await NoteGenerationService.generateDAP(transcript: transcript, tone: currentTone, clientContext: context)
                 guard note.hasSufficientContent else {
                     insufficientContentReason = note.insufficientContentReason
                     isGenerating = false
@@ -462,7 +470,7 @@ struct ReviewNoteView: View {
                 timeSpent = note.timeSpent
                 interventionsUsed = note.interventionsUsed
             case .goalFocused:
-                let note = try await NoteGenerationService.generateGoalFocused(transcript: transcript, tone: currentTone)
+                let note = try await NoteGenerationService.generateGoalFocused(transcript: transcript, tone: currentTone, clientContext: context)
                 guard note.hasSufficientContent else {
                     insufficientContentReason = note.insufficientContentReason
                     isGenerating = false
